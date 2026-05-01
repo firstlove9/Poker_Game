@@ -1,0 +1,142 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { motion } from 'framer-motion'
+import { Layers, Users, Zap, Shield } from 'lucide-react'
+
+export default function HomePage() {
+  const navigate = useNavigate()
+  const [playerName, setPlayerName] = useState('')
+
+  const handleEnter = () => {
+    if (playerName.trim()) {
+      localStorage.setItem('playerName', playerName)
+      navigate('/lobby')
+    }
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4">
+      {/* Logo */}
+      <motion.div
+        initial={{ scale: 0, rotate: -180 }}
+        animate={{ scale: 1, rotate: 0 }}
+        transition={{ duration: 0.8, type: 'spring' }}
+        className="mb-8"
+      >
+        <div className="relative">
+          <div className="w-32 h-32 bg-gradient-to-br from-gold to-gold-light rounded-2xl flex items-center justify-center shadow-2xl transform rotate-3">
+            <Layers className="w-16 h-16 text-poker-green-dark" />
+          </div>
+          <div className="absolute -top-2 -right-2 w-12 h-12 bg-red-600 rounded-full flex items-center justify-center shadow-lg">
+            <span className="text-white font-bold text-lg">♠</span>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* 标题 */}
+      <motion.h1
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+        className="text-5xl md:text-6xl font-bold text-white mb-2 text-center"
+      >
+        <span className="text-gold">德州</span>扑克
+      </motion.h1>
+      
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.5 }}
+        className="text-white/60 text-lg mb-12"
+      >
+        Texas Hold'em Poker
+      </motion.p>
+
+      {/* 输入框 */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.6 }}
+        className="w-full max-w-md mb-8"
+      >
+        <input
+          type="text"
+          value={playerName}
+          onChange={(e) => setPlayerName(e.target.value)}
+          onKeyPress={(e) => e.key === 'Enter' && handleEnter()}
+          placeholder="请输入你的昵称"
+          className="w-full px-6 py-4 text-lg bg-white/10 border-2 border-white/20 rounded-xl 
+                     text-white placeholder-white/40 focus:outline-none focus:border-gold
+                     transition-colors text-center"
+          maxLength={20}
+        />
+      </motion.div>
+
+      {/* 进入按钮 */}
+      <motion.button
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.7 }}
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={handleEnter}
+        disabled={!playerName.trim()}
+        className="btn-poker-primary text-xl px-12 py-4 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        进入游戏
+      </motion.button>
+
+      {/* 单机模式按钮 */}
+      <motion.button
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.75 }}
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={() => {
+          if (playerName.trim()) {
+            localStorage.setItem('playerName', playerName)
+          }
+          navigate('/single-player')
+        }}
+        className="mt-4 text-white/60 hover:text-white text-sm underline"
+      >
+        单机练习模式
+      </motion.button>
+
+      {/* 特性介绍 */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.9 }}
+        className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl"
+      >
+        <FeatureCard
+          icon={<Users className="w-8 h-8" />}
+          title="多人对战"
+          description="支持2-12人同时游戏"
+        />
+        <FeatureCard
+          icon={<Zap className="w-8 h-8" />}
+          title="实时对战"
+          description="流畅的实时游戏体验"
+        />
+        <FeatureCard
+          icon={<Shield className="w-8 h-8" />}
+          title="私密房间"
+          description="创建私密房间邀请好友"
+        />
+      </motion.div>
+    </div>
+  )
+}
+
+function FeatureCard({ icon, title, description }: { icon: React.ReactNode; title: string; description: string }) {
+  return (
+    <div className="glass-panel p-6 text-center hover:bg-white/5 transition-colors">
+      <div className="text-gold mb-3 flex justify-center">{icon}</div>
+      <h3 className="text-white font-bold mb-2">{title}</h3>
+      <p className="text-white/60 text-sm">{description}</p>
+    </div>
+  )
+}

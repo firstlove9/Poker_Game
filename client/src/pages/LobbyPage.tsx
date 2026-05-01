@@ -1,0 +1,226 @@
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { motion } from 'framer-motion'
+import { Plus, Play, Lock, Users, RefreshCw } from 'lucide-react'
+import { useSocketStore } from '../stores/socketStore'
+import { useGameStore } from '../stores/gameStore'
+import { ClientEvents, ServerEvents, Room } from '../types'
+import CreateRoomModal from '../components/CreateRoomModal'
+
+export default function LobbyPage() {
+  const navigate = useNavigate()
+  const { emit, on, off } = useSocketStore()
+  const { setCurrentRoom, setCurrentPlayer } = useGameStore()
+
+  const [rooms, setRooms] = useState<Room[]>([])
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [joinRoomId, setJoinRoomId] = useState('')
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const playerName = localStorage.getItem('playerName') || '匿名玩家'
+
+  useEffect(() => {
+    fetchRooms()
+
+    const handleRoomUpdated = () => {
+      fetchRooms()
+    }
+    on(ServerEvents.ROOM_UPDATED, handleRoomUpdated)
+
+    return () => {
+      off(ServerEvents.ROOM_UPDATED, handleRoomUpdated)
+    }
+  }, [on, off])
+
+  const fetchRooms = async () => {
+    try {
+      setIsRefreshing(true)
+      const response = await fetch('/api/rooms')
+      const data = await response.json()
+      if (data.success) {
+        setRooms(data.rooms || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch rooms:', error)
+      setRooms([])
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  const handleCreateRoom = async (config: any) => {
+    try {
+      const response = await emit(ClientEvents.CREATE_ROOM, {
+        ...config,
+        hostName: playerName,
+      })
+
+      if (response.success) {
+        setCurrentRoom(response.room)
+        const player = response.room.players.find((p: any) => p.name === playerName)
+        if (player) setCurrentPlayer(player)
+        navigate(`/room/${response.room.config.roomId}`)
+      }
+    } catch (error) {
+      console.error('Failed to create room:', error)
+      alert('创建房间失败')
+    }
+  }
+
+  const handleJoinRoom = async (roomId: string) => {
+    try {
+      const response = await emit(ClientEvents.JOIN_ROOM, {
+        roomId,
+        playerName,
+      })
+
+      if (response.success) {
+        setCurrentRoom(response.room)
+        const player = response.room.players.find((p: any) => p.id === response.playerId)
+        if (player) setCurrentPlayer(player)
+        navigate(`/room/${roomId}`)
+      }
+    } catch (error: any) {
+      alert(error.message || '加入房间失败')
+    }
+  }
+
+  const handleQuickJoin = async () => {
+    const availableRoom = rooms.find(r => r && r.config && r.players && r.players.length < r.config.maxPlayers && !r.config.isPrivate)
+    if (availableRoom) {
+      await handleJoinRoom(availableRoom.config.roomId)
+    } else {
+      alert('暂无可用房间，请创建新房间')
+    }
+  }
+
+  const validRooms = rooms.filter(room => room && room.config)
+
+  return (
+    <div className="min-h-screen p-4 md:p-8">
+      <div className="max-w-6xl mx-auto mb-8">
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-white mb-1">
+              <span className="text-gold">游戏</span>大厅
+            </h1>
+            <p className="text-white/60">欢迎, {playerName}</p>
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={handleQuickJoin}
+              className="btn-poker-primary flex items-center gap-2"
+            >
+              <Play className="w-5 h-5" />
+              快速加入
+            </button>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="btn-poker-secondary flex items-center gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              创建房间
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto mb-8">
+        <div className="glass-panel p-4 flex gap-3">
+          <input
+            type="text"
+            value={joinRoomId}
+            onChange={(e) => setJoinRoomId(e.target.value.toUpperCase())}
+            placeholder="输入6位房间号"
+            className="flex-1 px-4 py-2 bg-white/10 border border-white/20 rounded-lg
+                       text-white placeholder-white/40 focus:outline-none focus:border-gold uppercase"
+            maxLength={6}
+          />
+          <button
+            onClick={() => joinRoomId && handleJoinRoom(joinRoomId)}
+            disabled={!joinRoomId}
+            className="btn-poker-secondary disabled:opacity-50"
+          >
+            加入
+          </button>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-bold text-white">房间列表</h2>
+          <button
+            onClick={fetchRooms}
+            disabled={isRefreshing}
+            className="text-white/60 hover:text-white flex items-center gap-1 transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
+
+        {validRooms.length === 0 ? (
+          <div className="glass-panel p-12 text-center">
+            <p className="text-white/60 text-lg">暂无房间</p>
+            <p className="text-white/40 text-sm mt-2">点击"创建房间"开始游戏</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {validRooms.map((room, index) => (
+              <motion.div
+                key={room.config.roomId}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.05 }}
+                className="glass-panel p-5 hover:bg-white/10 transition-colors cursor-pointer"
+                onClick={() => handleJoinRoom(room.config.roomId)}
+              >
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <h3 className="text-white font-bold text-lg">{room.config.roomName || '未知房间'}</h3>
+                    <p className="text-white/40 text-sm">ID: {room.config.roomId}</p>
+                  </div>
+                  {room.config.isPrivate && (
+                    <Lock className="w-5 h-5 text-gold" />
+                  )}
+                </div>
+
+                <div className="flex items-center gap-4 text-sm mb-4">
+                  <div className="flex items-center gap-1 text-white/60">
+                    <Users className="w-4 h-4" />
+                    <span>{room.players?.length || 0}/{room.config.maxPlayers || 0}</span>
+                  </div>
+                  <div className="text-white/60">
+                    盲注: {room.config.smallBlind || 0}/{room.config.bigBlind || 0}
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium
+                    ${room.status === 'waiting' ? 'bg-green-500/20 text-green-400' :
+                      room.status === 'playing' ? 'bg-yellow-500/20 text-yellow-400' :
+                      'bg-gray-500/20 text-gray-400'}`}>
+                    {room.status === 'waiting' ? '等待中' :
+                     room.status === 'playing' ? '游戏中' : '已结束'}
+                  </span>
+
+                  <button className="text-gold hover:text-gold-light text-sm font-medium">
+                    {room.status === 'playing' ? '观战' : '加入'} →
+                  </button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {showCreateModal && (
+        <CreateRoomModal
+          onClose={() => setShowCreateModal(false)}
+          onCreate={handleCreateRoom}
+        />
+      )}
+    </div>
+  )
+}
