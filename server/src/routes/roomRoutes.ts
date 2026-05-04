@@ -56,6 +56,7 @@ export function createRoomRoutes(roomManager: RoomManager): Router {
           totalBuyIn: p.totalBuyIn,
           isReady: p.isReady,
           isOnline: p.isOnline,
+          hasPlayedHand: p.hasPlayedHand,
         })),
         gameState: room.gameState ? {
           handId: room.gameState.handId,

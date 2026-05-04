@@ -129,14 +129,20 @@ export const useSocketStore = create<SocketState>((set, get) => ({
         reject(new Error('Request timeout'))
       }, timeoutMs || 180000)
 
-      socket.emit(event, data, (response: any) => {
+      const ack = (response: any) => {
         clearTimeout(timeout)
         if (response?.success) {
           resolve(response)
         } else {
           reject(new Error(response?.error || 'Request failed'))
         }
-      })
+      }
+
+      if (data !== undefined) {
+        socket.emit(event, data, ack)
+      } else {
+        socket.emit(event, ack)
+      }
     })
   },
 

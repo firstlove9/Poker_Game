@@ -1,17 +1,32 @@
-// 扑克牌
 export interface Card {
   suit: 'hearts' | 'diamonds' | 'clubs' | 'spades';
   rank: string;
   code: string;
 }
 
-// 房间
+export type RunItTwiceChoice = 'once' | 'twice';
+
+export interface RunItTwiceDiceResult {
+  player1: { id: string; value: number };
+  player2: { id: string; value: number };
+  finalChoice: RunItTwiceChoice;
+}
+
+export interface RunItTwiceRoundResult {
+  communityCards: Card[];
+  winnerIds: string[];
+  winAmount: number;
+  potAmount: number;
+  handRanks: Record<string, string>;
+}
+
 export interface Room {
   config: {
     roomId: string;
     roomName: string;
     hostId: string;
     maxPlayers: number;
+    minPlayers: number;
     smallBlind: number;
     bigBlind: number;
     buyInMin: number;
@@ -23,7 +38,6 @@ export interface Room {
   gameState?: GameState;
 }
 
-// 房间中的玩家
 export interface RoomPlayer {
   id: string;
   name: string;
@@ -34,9 +48,9 @@ export interface RoomPlayer {
   isReady: boolean;
   isOnline: boolean;
   isNpc?: boolean;
+  hasPlayedHand?: boolean;
 }
 
-// 游戏状态
 export interface GameState {
   handId: string;
   phase: string;
@@ -50,15 +64,19 @@ export interface GameState {
   roundBets: Record<string, number>;
   playerStatus: Record<string, string>;
   playerRoles: Record<string, string>;
+  isHeadsUpAllIn?: boolean;
+  runItTwiceChoices?: Record<string, RunItTwiceChoice>;
+  runItTwiceDiceResult?: RunItTwiceDiceResult | null;
+  runItTwiceDiceReady?: Record<string, boolean>;
+  runItTwiceBoard?: Card[][];
+  runItTwiceResults?: RunItTwiceRoundResult[];
 }
 
-// 底池
 export interface Pot {
   id: string;
   amount: number;
 }
 
-// 赢家信息
 export interface WinnerInfo {
   playerId: string;
   playerName: string;
@@ -71,7 +89,6 @@ export interface WinnerInfo {
   potType?: 'main' | 'side' | 'both';
 }
 
-// 所有玩家手牌信息
 export interface PlayerHandInfo {
   playerId: string;
   playerName: string;
@@ -82,9 +99,9 @@ export interface PlayerHandInfo {
   winAmount?: number;
   potType?: 'main' | 'side' | 'both';
   netWin?: number;
+  roundHandRanks?: string[];
 }
 
-// WebSocket事件
 export enum ClientEvents {
   CREATE_ROOM = 'room:create',
   JOIN_ROOM = 'room:join',
@@ -96,6 +113,8 @@ export enum ClientEvents {
   SEND_CHAT = 'chat:send',
   VOTE_LEAVE = 'room:vote_leave',
   VOTE_LEAVE_RESPONSE = 'room:vote_leave_response',
+  RUN_IT_TWICE_CHOICE = 'game:run_it_twice_choice',
+  RUN_IT_TWICE_ROLL_DICE = 'game:run_it_twice_roll_dice',
 }
 
 export enum ServerEvents {
@@ -119,4 +138,8 @@ export enum ServerEvents {
   VOTE_LEAVE_RESPONSE = 'room:vote_leave_response',
   VOTE_LEAVE_ENDED = 'room:vote_leave_ended',
   ROOM_CLOSED = 'room:closed',
+  RUN_IT_TWICE_ASK = 'game:run_it_twice_ask',
+  RUN_IT_TWICE_CHOICE_RESULT = 'game:run_it_twice_choice_result',
+  RUN_IT_TWICE_DICE_RESULT = 'game:run_it_twice_dice_result',
+  RUN_IT_TWICE_EXECUTING = 'game:run_it_twice_executing',
 }

@@ -2,7 +2,7 @@ import { Socket, Server } from 'socket.io';
 import { RoomManager } from '../../room/RoomManager';
 import { GameEngine } from '../../game/GameEngine';
 import { ClientEvents, ServerEvents } from '../../types/events';
-import { PlayerAction, GamePhase } from '../../types/poker';
+import { PlayerAction, GamePhase, RunItTwiceChoice } from '../../types/poker';
 import { RoomStatus } from '../../types/room';
 import { addActionLog, loadRoomLogs } from '../../room/ActionLogManager';
 
@@ -12,6 +12,98 @@ function safeCallback(callback: any, response: any): void {
   if (typeof callback === 'function') {
     callback(response);
   }
+}
+
+function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: any[], potResults: any[], allHands: any[], finalGameState: any, io: any): void {
+  const mergedWinners = (() => {
+    const map = new Map<string, any>();
+    for (const w of winners) {
+      const existing = map.get(w.playerId);
+      if (existing) {
+        existing.winAmount += w.winAmount;
+        if (w.potType === 'side') {
+          existing.potType = 'both';
+        }
+      } else {
+        map.set(w.playerId, { ...w });
+      }
+    }
+    for (const [, mw] of map) {
+      const allHand = allHands.find((h: any) => h.playerId === mw.playerId && h.isWinner);
+      if (allHand && allHand.winAmount !== undefined) {
+        mw.winAmount = allHand.winAmount;
+      }
+    }
+    return Array.from(map.values()).filter((mw: any) => {
+      const allHand = allHands.find((h: any) => h.playerId === mw.playerId);
+      return allHand && allHand.isWinner;
+    });
+  })();
+
+  room.status = RoomStatus.WAITING;
+
+  const currentGamePlayers = gameEngine.getPlayers();
+  const currentGamePlayerIds = new Set(currentGamePlayers.map(p => p.id));
+  for (const p of room.players) {
+    if (currentGamePlayerIds.has(p.id)) {
+      p.isReady = false;
+    }
+  }
+
+  const isRunItTwice = finalGameState.runItTwiceResults && finalGameState.runItTwiceResults.length > 0;
+
+  io.to(roomId).emit(ServerEvents.SHOWDOWN, {
+    winners: mergedWinners,
+    potResults,
+    allHands,
+    communityCards: finalGameState.communityCards,
+    gameState: sanitizeGameState(finalGameState),
+    room: sanitizeRoom(room),
+    ...(isRunItTwice ? {
+      runItTwiceBoard: finalGameState.runItTwiceBoard,
+      runItTwiceResults: finalGameState.runItTwiceResults,
+    } : {}),
+  });
+
+  io.to(roomId).emit(ServerEvents.HAND_RESULT, {
+    winners: mergedWinners,
+    potResults,
+    allHands,
+    communityCards: finalGameState.communityCards,
+    room: sanitizeRoom(room),
+    ...(isRunItTwice ? {
+      runItTwiceBoard: finalGameState.runItTwiceBoard,
+      runItTwiceResults: finalGameState.runItTwiceResults,
+    } : {}),
+  });
+
+  room.gameState = {
+    ...room.gameState,
+    currentBet: 0,
+    minRaise: room.config?.bigBlind || 20,
+    roundBets: {},
+    pots: [],
+    totalPot: 0,
+    actions: [],
+    communityCards: [],
+    playerCards: {},
+    playerStatus: {},
+    playerRoles: {},
+    lastRaiseIndex: -1,
+    currentPlayerIndex: -1,
+    currentPlayerId: '',
+    isHeadsUpAllIn: false,
+    runItTwiceChoices: {},
+    runItTwiceDiceResult: null,
+    runItTwiceDiceReady: {},
+    runItTwiceBoard: [],
+    runItTwiceResults: [],
+  };
+
+  io.to(roomId).emit(ServerEvents.ROOM_UPDATED, {
+    type: 'updated',
+    room: sanitizeRoom(room),
+  });
 }
 
 export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomManager): void {
@@ -71,6 +163,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
         }
 
         const isGameEnding = gameState.phase === GamePhase.SHOWDOWN || gameState.phase === GamePhase.ENDED;
+        const isRunItTwiceChoice = gameState.phase === GamePhase.RUN_IT_TWICE_CHOICE;
 
         io.to(roomId).emit(ServerEvents.ACTION_RESULT, {
           playerId,
@@ -81,7 +174,15 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
           ...(isGameEnding ? {} : { room: sanitizeRoom(room) }),
         });
 
-        if (isGameEnding) {
+        if (isRunItTwiceChoice) {
+          const nonFoldedPlayers = room.players.filter((p: any) =>
+            gameState.playerStatus?.[p.id] !== 'folded'
+          );
+          io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_ASK, {
+            gameState: sanitizeGameState(gameState),
+            players: nonFoldedPlayers.map((p: any) => ({ id: p.id, name: p.name })),
+          });
+        } else if (isGameEnding) {
           const { winners, potResults, allHands } = gameEngine.showdown();
 
           const finalGameState = gameEngine.getState();
@@ -104,79 +205,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
             }
           }
 
-          const mergedWinners = (() => {
-            const map = new Map<string, any>();
-            for (const w of winners) {
-              const existing = map.get(w.playerId);
-              if (existing) {
-                existing.winAmount += w.winAmount;
-                if (w.potType === 'side') {
-                  existing.potType = 'both';
-                }
-              } else {
-                map.set(w.playerId, { ...w });
-              }
-            }
-            for (const [, mw] of map) {
-              const allHand = allHands.find((h: any) => h.playerId === mw.playerId && h.isWinner);
-              if (allHand && allHand.winAmount !== undefined) {
-                mw.winAmount = allHand.winAmount;
-              }
-            }
-            return Array.from(map.values()).filter((mw: any) => {
-              const allHand = allHands.find((h: any) => h.playerId === mw.playerId);
-              return allHand && allHand.isWinner;
-            });
-          })();
-
-          room.status = RoomStatus.WAITING;
-
-          const currentGamePlayers = gameEngine.getPlayers();
-          const currentGamePlayerIds = new Set(currentGamePlayers.map(p => p.id));
-          for (const p of room.players) {
-            if (currentGamePlayerIds.has(p.id)) {
-              p.isReady = false;
-            }
-          }
-
-          io.to(roomId).emit(ServerEvents.SHOWDOWN, {
-            winners: mergedWinners,
-            potResults,
-            allHands,
-            communityCards: finalGameState.communityCards,
-            gameState: sanitizeGameState(finalGameState),
-            room: sanitizeRoom(room),
-          });
-
-          io.to(roomId).emit(ServerEvents.HAND_RESULT, {
-            winners: mergedWinners,
-            potResults,
-            allHands,
-            communityCards: finalGameState.communityCards,
-            room: sanitizeRoom(room),
-          });
-
-          room.gameState = {
-            ...room.gameState,
-            currentBet: 0,
-            minRaise: room.config?.bigBlind || 20,
-            roundBets: {},
-            pots: [],
-            totalPot: 0,
-            actions: [],
-            communityCards: [],
-            playerCards: {},
-            playerStatus: {},
-            playerRoles: {},
-            lastRaiseIndex: -1,
-            currentPlayerIndex: -1,
-            currentPlayerId: '',
-          };
-
-          io.to(roomId).emit(ServerEvents.ROOM_UPDATED, {
-            type: 'updated',
-            room: sanitizeRoom(room),
-          });
+          finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io);
         } else {
           const currentPlayerId = gameEngine.getCurrentPlayerId();
           if (currentPlayerId) {
@@ -218,6 +247,196 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
       }
     } catch (error) {
       safeCallback(callback, { success: false, error: '执行动作失败' });
+    }
+  });
+
+  socket.on(ClientEvents.RUN_IT_TWICE_CHOICE, (data: { choice: RunItTwiceChoice }, callback?: (response: any) => void) => {
+    try {
+      const playerId = socket.data.playerId;
+      if (!playerId) {
+        safeCallback(callback, { success: false, error: '未登录' });
+        return;
+      }
+
+      const roomId = roomManager.getPlayerRoomId(playerId);
+      if (!roomId) {
+        safeCallback(callback, { success: false, error: '你不在任何房间中' });
+        return;
+      }
+
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        safeCallback(callback, { success: false, error: '房间不存在' });
+        return;
+      }
+
+      const gameEngine = gameEngines.get(roomId);
+      if (!gameEngine) {
+        safeCallback(callback, { success: false, error: '游戏引擎未找到' });
+        return;
+      }
+
+      const result = gameEngine.submitRunItTwiceChoice(playerId, data.choice);
+
+      if (!result.success) {
+        safeCallback(callback, { success: false, error: result.error });
+        return;
+      }
+
+      const gameState = gameEngine.getState();
+      room.gameState = gameState;
+
+      const actor = room.players.find((p: any) => p.id === playerId);
+
+      io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_CHOICE_RESULT, {
+        playerId,
+        playerName: actor?.name || playerId,
+        choice: data.choice,
+        gameState: sanitizeGameState(gameState),
+      });
+
+      if (result.bothSubmitted) {
+        if (result.needDice) {
+          io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_DICE_RESULT, {
+            gameState: sanitizeGameState(gameState),
+            needDice: true,
+            players: room.players
+              .filter((p: any) => gameState.playerStatus?.[p.id] !== 'folded')
+              .map((p: any) => ({ id: p.id, name: p.name })),
+          });
+        } else {
+          const finalChoice = result.finalChoice || 'once';
+          io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_EXECUTING, {
+            finalChoice,
+            gameState: sanitizeGameState(gameState),
+          });
+
+          const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
+          const finalGameState = gameEngine.getState();
+          room.gameState = finalGameState;
+          syncPlayerChipsToRoom(gameEngine, room);
+          autoRebuyBustedPlayers(room, io);
+
+          for (const w of winners) {
+            const roomPlayer = room.players.find((p: any) => p.id === w.playerId);
+            if (roomPlayer) w.playerName = roomPlayer.name;
+          }
+          for (const h of allHands) {
+            const roomPlayer = room.players.find((p: any) => p.id === h.playerId);
+            if (roomPlayer) h.playerName = roomPlayer.name;
+          }
+
+          finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io);
+        }
+      }
+
+      safeCallback(callback, { success: true });
+    } catch (error) {
+      safeCallback(callback, { success: false, error: '选择失败' });
+    }
+  });
+
+  socket.on(ClientEvents.RUN_IT_TWICE_ROLL_DICE, (_data: any, callback?: (response: any) => void) => {
+    try {
+      const playerId = socket.data.playerId;
+      if (!playerId) {
+        safeCallback(callback, { success: false, error: '未登录' });
+        return;
+      }
+
+      const roomId = roomManager.getPlayerRoomId(playerId);
+      if (!roomId) {
+        safeCallback(callback, { success: false, error: '你不在任何房间中' });
+        return;
+      }
+
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        safeCallback(callback, { success: false, error: '房间不存在' });
+        return;
+      }
+
+      const gameEngine = gameEngines.get(roomId);
+      if (!gameEngine) {
+        safeCallback(callback, { success: false, error: '游戏引擎未找到' });
+        return;
+      }
+
+      const result = gameEngine.submitDiceRoll(playerId);
+
+      if (!result.success) {
+        safeCallback(callback, { success: false, error: result.error });
+        return;
+      }
+
+      const actor = room.players.find((p: any) => p.id === playerId);
+      const gameState = gameEngine.getState();
+
+      io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_DICE_RESULT, {
+        playerId,
+        playerName: actor?.name || playerId,
+        ready: true,
+        diceReady: gameState.runItTwiceDiceReady,
+        gameState: sanitizeGameState(gameState),
+        needDice: true,
+      });
+
+      if (result.bothReady && result.diceResult) {
+        const isTied = gameEngine.isDiceTied();
+
+        io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_DICE_RESULT, {
+          bothReady: true,
+          diceResult: result.diceResult,
+          isTied,
+          finalChoice: result.diceResult.finalChoice,
+          gameState: sanitizeGameState(gameState),
+          needDice: true,
+        });
+
+        if (isTied) {
+          setTimeout(() => {
+            gameEngine.resetDiceForReroll();
+            const updatedState = gameEngine.getState();
+            room.gameState = updatedState;
+            io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_DICE_RESULT, {
+              reroll: true,
+              gameState: sanitizeGameState(updatedState),
+              needDice: true,
+              players: room.players
+                .filter((p: any) => updatedState.playerStatus?.[p.id] !== 'folded')
+                .map((p: any) => ({ id: p.id, name: p.name })),
+            });
+          }, 2000);
+        } else {
+          setTimeout(() => {
+            io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_EXECUTING, {
+              finalChoice: result.diceResult!.finalChoice,
+              gameState: sanitizeGameState(gameState),
+            });
+
+            const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
+            const finalGameState = gameEngine.getState();
+            room.gameState = finalGameState;
+            syncPlayerChipsToRoom(gameEngine, room);
+            autoRebuyBustedPlayers(room, io);
+
+            for (const w of winners) {
+              const roomPlayer = room.players.find((p: any) => p.id === w.playerId);
+              if (roomPlayer) w.playerName = roomPlayer.name;
+            }
+            for (const h of allHands) {
+              const roomPlayer = room.players.find((p: any) => p.id === h.playerId);
+              if (roomPlayer) h.playerName = roomPlayer.name;
+            }
+
+            finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io);
+          }, 2000);
+        }
+      }
+
+      safeCallback(callback, { success: true });
+    } catch (error) {
+      safeCallback(callback, { success: false, error: '掷骰子失败' });
     }
   });
 
@@ -301,6 +520,7 @@ function sanitizeRoom(room: any): any {
       totalBuyIn: p.totalBuyIn,
       isReady: p.isReady,
       isOnline: p.isOnline,
+      hasPlayedHand: p.hasPlayedHand,
     })),
   };
 }

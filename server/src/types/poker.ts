@@ -57,9 +57,13 @@ export enum GamePhase {
   FLOP = 'flop',
   TURN = 'turn',
   RIVER = 'river',
+  RUN_IT_TWICE_CHOICE = 'run-it-twice-choice',
+  RUN_IT_TWICE_DICE = 'run-it-twice-dice',
   SHOWDOWN = 'showdown',
   ENDED = 'ended',
 }
+
+export type RunItTwiceChoice = 'once' | 'twice';
 
 // 玩家动作
 export enum PlayerAction {

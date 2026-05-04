@@ -111,6 +111,11 @@ export default function RoomPage() {
   const fetchRoomInfo = async () => {
     try {
       const response = await fetch(`/api/rooms/${roomId}`)
+      if (!response.ok) {
+        addToast('房间不存在或已关闭', 'error')
+        navigate('/lobby')
+        return
+      }
       const data = await response.json()
       if (data.success) {
         setCurrentRoom(data.room)
@@ -119,29 +124,32 @@ export default function RoomPage() {
           setCurrentPlayer(player)
           setIsReady(player.isReady)
         }
+      } else {
+        addToast('房间不存在或已关闭', 'error')
+        navigate('/lobby')
       }
     } catch (error) {
       console.error('Failed to fetch room info:', error)
+      addToast('无法连接服务器', 'error')
+      navigate('/lobby')
     }
   }
 
   const handleLeaveRoom = async () => {
-    if (currentRoom && currentRoom.players.length > 1) {
-      // 如果有多人，发起投票
+    if (currentRoom && currentRoom.players.length > 1 && currentPlayer?.hasPlayedHand) {
       try {
         await emit(ClientEvents.VOTE_LEAVE)
       } catch (error: any) {
         addToast(error.message || '发起投票失败', 'error')
       }
     } else {
-      // 如果只有一个人，直接离开
       try {
         await emit(ClientEvents.LEAVE_ROOM)
-        setCurrentRoom(null)
-        navigate('/lobby')
-      } catch (error) {
-        console.error('Failed to leave room:', error)
+      } catch (error: any) {
+        addToast(error.message || '离开失败', 'error')
       }
+      setCurrentRoom(null)
+      navigate('/lobby')
     }
   }
 
@@ -183,7 +191,7 @@ export default function RoomPage() {
 
   const isHost = currentPlayer?.id === currentRoom.config.hostId
   const readyPlayers = currentRoom.players.filter(p => p.isReady).length
-  const canStart = isHost && readyPlayers >= 3
+  const canStart = isHost && readyPlayers >= (currentRoom.config.minPlayers || 2)
   const isPlaying = currentRoom.status === 'playing'
 
   return (
@@ -260,7 +268,7 @@ export default function RoomPage() {
             className="text-white/60 hover:text-white flex items-center gap-2 transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
-            {currentRoom.players.length > 1 ? '投票离开' : '返回大厅'}
+            {currentRoom.players.length > 1 && currentPlayer?.hasPlayedHand ? '投票离开' : '返回大厅'}
           </button>
 
           <div className="text-center">

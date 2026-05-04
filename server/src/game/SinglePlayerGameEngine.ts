@@ -73,6 +73,12 @@ export class SinglePlayerGameEngine {
       playerRoles: {},
       actions: [],
       startTime: Date.now(),
+      isHeadsUpAllIn: false,
+      runItTwiceChoices: {},
+      runItTwiceDiceResult: null,
+      runItTwiceDiceReady: {},
+      runItTwiceBoard: [],
+      runItTwiceResults: [],
     };
   }
 

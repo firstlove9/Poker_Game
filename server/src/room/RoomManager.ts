@@ -112,26 +112,10 @@ export class RoomManager {
       return { success: false, error: '你已在该房间中' };
     }
 
-    // 如果玩家在其他房间中，先自动离开旧房间
+    // 检查是否在其他房间中
     const currentRoomId = this.playerRooms.get(playerId);
     if (currentRoomId && currentRoomId !== roomId) {
-      const oldRoom = this.rooms.get(currentRoomId);
-      if (oldRoom) {
-        oldRoom.players = oldRoom.players.filter(p => p.id !== playerId);
-        if (oldRoom.players.length === 0) {
-          this.rooms.delete(currentRoomId);
-        } else if (oldRoom.players.length < 3) {
-          this.rooms.delete(currentRoomId);
-          for (const p of oldRoom.players) {
-            this.playerRooms.delete(p.id);
-          }
-        } else {
-          if (oldRoom.config.hostId === playerId && oldRoom.players.length > 0) {
-            oldRoom.config.hostId = oldRoom.players[0].id;
-          }
-        }
-      }
-      this.playerRooms.delete(playerId);
+      return { success: false, error: '你已在其他房间中，请先离开当前房间' };
     }
 
     // 验证昵称
@@ -172,7 +156,7 @@ export class RoomManager {
   }
 
   // 离开房间
-  leaveRoom(playerId: string): { success: boolean; roomId?: string; error?: string; shouldClose?: boolean } {
+  leaveRoom(playerId: string, force?: boolean): { success: boolean; roomId?: string; error?: string; room?: Room } {
     const roomId = this.playerRooms.get(playerId);
     if (!roomId) {
       return { success: false, error: '你不在任何房间中' };
@@ -184,7 +168,7 @@ export class RoomManager {
       return { success: false, error: '房间不存在' };
     }
 
-    if (room.status === RoomStatus.PLAYING) {
+    if (!force && room.status === RoomStatus.PLAYING) {
       return { success: false, error: '牌局进行中，请等待本局结束后退出' };
     }
 
@@ -193,18 +177,14 @@ export class RoomManager {
 
     if (room.players.length === 0) {
       this.rooms.delete(roomId);
-      return { success: true, roomId, shouldClose: true };
-    }
-
-    if (room.players.length < 3) {
-      return { success: true, roomId, shouldClose: true };
+      return { success: true, roomId, room };
     }
 
     if (room.config.hostId === playerId && room.players.length > 0) {
       room.config.hostId = room.players[0].id;
     }
 
-    return { success: true, roomId };
+    return { success: true, roomId, room };
   }
 
   // 玩家准备
@@ -329,7 +309,7 @@ export class RoomManager {
   }
 
   // 开始投票离开
-  startVoteLeave(playerId: string): { success: boolean; error?: string; room?: Room } {
+  startVoteLeave(playerId: string): { success: boolean; error?: string; room?: Room; cooldownRemaining?: number } {
     const roomId = this.playerRooms.get(playerId);
     if (!roomId) {
       return { success: false, error: '你不在任何房间中' };
@@ -342,6 +322,16 @@ export class RoomManager {
 
     if (room.voteLeave) {
       return { success: false, error: '已有投票进行中' };
+    }
+
+    if (!room.voteLeaveCooldowns) {
+      room.voteLeaveCooldowns = new Map();
+    }
+
+    const cooldownUntil = room.voteLeaveCooldowns.get(playerId);
+    if (cooldownUntil && Date.now() < cooldownUntil) {
+      const remaining = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return { success: false, error: `投票冷却中，请等待${remaining}秒`, cooldownRemaining: remaining };
     }
 
     const player = room.players.find(p => p.id === playerId);
@@ -358,11 +348,15 @@ export class RoomManager {
 
     room.voteLeave.votes.set(playerId, true);
 
+    if (room.voteLeave.votes.size === room.players.length) {
+      room.voteLeave.approved = true;
+    }
+
     return { success: true, room };
   }
 
   // 响应投票
-  voteLeaveResponse(playerId: string, approve: boolean): { success: boolean; error?: string; room?: Room; approved?: boolean; roomId?: string; voteCounts?: { approveCount: number; rejectCount: number } } {
+  voteLeaveResponse(playerId: string, approve: boolean): { success: boolean; error?: string; room?: Room; approved?: boolean; roomId?: string; voteCounts?: { approveCount: number; rejectCount: number }; initiatorId?: string } {
     const roomId = this.playerRooms.get(playerId);
     if (!roomId) {
       return { success: false, error: '你不在任何房间中' };
@@ -382,8 +376,13 @@ export class RoomManager {
     if (!approve) {
       const approveCount = Array.from(room.voteLeave.votes.values()).filter(v => v).length;
       const rejectCount = Array.from(room.voteLeave.votes.values()).filter(v => !v).length;
+      const initiatorId = room.voteLeave.initiatorId;
       room.voteLeave = undefined;
-      return { success: true, room, approved: false, roomId, voteCounts: { approveCount, rejectCount } };
+      if (!room.voteLeaveCooldowns) {
+        room.voteLeaveCooldowns = new Map();
+      }
+      room.voteLeaveCooldowns.set(initiatorId, Date.now() + 10000);
+      return { success: true, room, approved: false, roomId, voteCounts: { approveCount, rejectCount }, initiatorId };
     }
 
     const allVoted = room.players.every(p => room.voteLeave!.votes.has(p.id));
@@ -399,8 +398,13 @@ export class RoomManager {
         this.rooms.delete(roomId);
         return { success: true, room, approved: true, roomId, voteCounts: { approveCount, rejectCount } };
       } else {
-        const result = { success: true, room, approved: false, roomId, voteCounts: { approveCount, rejectCount } };
+        const initiatorId = room.voteLeave.initiatorId;
+        const result = { success: true, room, approved: false, roomId, voteCounts: { approveCount, rejectCount }, initiatorId };
         room.voteLeave = undefined;
+        if (!room.voteLeaveCooldowns) {
+          room.voteLeaveCooldowns = new Map();
+        }
+        room.voteLeaveCooldowns.set(initiatorId, Date.now() + 10000);
         return result;
       }
     }

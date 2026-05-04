@@ -10,6 +10,8 @@ export enum ClientEvents {
   SEND_CHAT = 'chat:send',
   VOTE_LEAVE = 'room:vote_leave',
   VOTE_LEAVE_RESPONSE = 'room:vote_leave_response',
+  RUN_IT_TWICE_CHOICE = 'game:run_it_twice_choice',
+  RUN_IT_TWICE_ROLL_DICE = 'game:run_it_twice_roll_dice',
 }
 
 // 服务端 → 客户端 事件
@@ -40,4 +42,8 @@ export enum ServerEvents {
   VOTE_LEAVE_RESPONSE = 'room:vote_leave_response',
   VOTE_LEAVE_ENDED = 'room:vote_leave_ended',
   ROOM_CLOSED = 'room:closed',
+  RUN_IT_TWICE_ASK = 'game:run_it_twice_ask',
+  RUN_IT_TWICE_CHOICE_RESULT = 'game:run_it_twice_choice_result',
+  RUN_IT_TWICE_DICE_RESULT = 'game:run_it_twice_dice_result',
+  RUN_IT_TWICE_EXECUTING = 'game:run_it_twice_executing',
 }

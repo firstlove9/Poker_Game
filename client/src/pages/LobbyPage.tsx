@@ -27,10 +27,15 @@ export default function LobbyPage() {
     const handleRoomUpdated = () => {
       fetchRooms()
     }
+    const handleRoomClosed = () => {
+      fetchRooms()
+    }
     on(ServerEvents.ROOM_UPDATED, handleRoomUpdated)
+    on(ServerEvents.ROOM_CLOSED, handleRoomClosed)
 
     return () => {
       off(ServerEvents.ROOM_UPDATED, handleRoomUpdated)
+      off(ServerEvents.ROOM_CLOSED, handleRoomClosed)
     }
   }, [on, off])
 
@@ -92,6 +97,7 @@ export default function LobbyPage() {
       }
     } catch (error: any) {
       addToast(error.message || '加入房间失败', 'error')
+      fetchRooms()
     }
   }
 

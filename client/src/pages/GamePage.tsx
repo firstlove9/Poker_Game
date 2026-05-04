@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useSocketStore } from '../stores/socketStore'
 import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
-import { ClientEvents, ServerEvents, Card, WinnerInfo, PlayerHandInfo } from '../types'
+import { ClientEvents, ServerEvents, Card, PlayerHandInfo, RunItTwiceChoice, RunItTwiceDiceResult, RunItTwiceRoundResult } from '../types'
 import ChatBox from '../components/ChatBox'
 import ActionLog, { ActionLogEntry } from '../components/ActionLog'
 
@@ -48,6 +48,20 @@ export default function GamePage() {
     votedPlayers: number
   } | null>(null)
   const [showVoteModal, setShowVoteModal] = useState(false)
+  const [voteCooldownUntil, setVoteCooldownUntil] = useState<number>(0)
+  const [voteCooldownRemaining, setVoteCooldownRemaining] = useState(0)
+
+  const [showRunItTwiceDialog, setShowRunItTwiceDialog] = useState(false)
+  const [runItTwiceMyChoice, setRunItTwiceMyChoice] = useState<RunItTwiceChoice | null>(null)
+  const [runItTwiceOtherChoice, setRunItTwiceOtherChoice] = useState<RunItTwiceChoice | null>(null)
+  const [runItTwiceOtherName, setRunItTwiceOtherName] = useState('')
+  const [showDiceDialog, setShowDiceDialog] = useState(false)
+  const [diceReady, setDiceReady] = useState<Record<string, boolean>>({})
+  const [diceResult, setDiceResult] = useState<RunItTwiceDiceResult | null>(null)
+  const [diceIsTied, setDiceIsTied] = useState(false)
+  const [dicePlayers, setDicePlayers] = useState<{ id: string; name: string }[]>([])
+  const [runItTwiceBoard, setRunItTwiceBoard] = useState<Card[][]>([])
+  const [runItTwiceResults, setRunItTwiceResults] = useState<RunItTwiceRoundResult[]>([])
 
   const addLog = useCallback((playerName: string, action: string, amount?: number, phase?: string) => {
     setActionLogs(prev => [...prev, {
@@ -65,6 +79,23 @@ export default function GamePage() {
   }, [])
 
   useEffect(() => {
+    if (voteCooldownUntil <= 0) {
+      setVoteCooldownRemaining(0)
+      return
+    }
+    const update = () => {
+      const remaining = Math.max(0, Math.ceil((voteCooldownUntil - Date.now()) / 1000))
+      setVoteCooldownRemaining(remaining)
+      if (remaining <= 0) {
+        setVoteCooldownUntil(0)
+      }
+    }
+    update()
+    const timer = setInterval(update, 1000)
+    return () => clearInterval(timer)
+  }, [voteCooldownUntil])
+
+  useEffect(() => {
     if (!roomId) return
 
     const handleGameStarted = (data: any) => {
@@ -75,6 +106,17 @@ export default function GamePage() {
       setMyCards(null)
       setShowRaiseSlider(false)
       setAllHands([])
+      setShowRunItTwiceDialog(false)
+      setRunItTwiceMyChoice(null)
+      setRunItTwiceOtherChoice(null)
+      setRunItTwiceOtherName('')
+      setShowDiceDialog(false)
+      setDiceReady({})
+      setDiceResult(null)
+      setDiceIsTied(false)
+      setDicePlayers([])
+      setRunItTwiceBoard([])
+      setRunItTwiceResults([])
       const meInRoom = data.room?.players?.find((p: any) => p.id === myPlayerId)
       setIsReady(meInRoom?.isReady || false)
       setIsWaitingForStart(false)
@@ -105,31 +147,6 @@ export default function GamePage() {
       addLog(actorName, data.action, data.amount, data.gameState?.phase)
       if (data.gameState?.currentPlayerId) {
         setIsMyTurn(data.gameState.currentPlayerId === myPlayerId)
-      }
-    }
-
-    const handleShowdown = (data: { winners: WinnerInfo[]; allHands?: PlayerHandInfo[]; communityCards?: Card[]; gameState: any; room?: any }) => {
-      setWinners(data.winners)
-      setShowResult(true)
-      if (data.allHands) {
-        setAllHands(data.allHands)
-      }
-      if (data.communityCards) {
-        setResultCommunityCards(data.communityCards)
-      }
-      if (data.gameState) {
-        setGameState(data.gameState)
-      }
-      if (data.room) {
-        setCurrentRoom(data.room)
-        const player = data.room.players?.find((p: any) => p.id === myPlayerId)
-        if (player) {
-          setCurrentPlayer(player)
-        }
-      }
-      addLog('系统', 'showdown', undefined, 'showdown')
-      for (const w of data.winners) {
-        addLog(w.playerName, 'win', w.winAmount, 'showdown')
       }
     }
 
@@ -210,6 +227,9 @@ export default function GamePage() {
         navigate('/lobby')
       } else {
         addToast(`投票未通过！${data.approvedCount}/${data.totalPlayers} 人同意`, 'error')
+        if (data.initiatorId === myPlayerId) {
+          setVoteCooldownUntil(Date.now() + 10000)
+        }
       }
     }
 
@@ -220,11 +240,115 @@ export default function GamePage() {
       }
     }
 
+    const handleRunItTwiceAsk = (data: any) => {
+      if (data.gameState) {
+        setGameState(data.gameState)
+      }
+      setShowRunItTwiceDialog(true)
+      setRunItTwiceMyChoice(null)
+      setRunItTwiceOtherChoice(null)
+      setRunItTwiceOtherName('')
+      setShowDiceDialog(false)
+      setDiceResult(null)
+      setDiceIsTied(false)
+      setRunItTwiceBoard([])
+      setRunItTwiceResults([])
+      addLog('系统', 'run-it-twice-ask', undefined, 'run-it-twice-choice')
+    }
+
+    const handleRunItTwiceChoiceResult = (data: any) => {
+      if (data.gameState) {
+        setGameState(data.gameState)
+      }
+      if (data.playerId === myPlayerId) {
+        setRunItTwiceMyChoice(data.choice)
+      } else {
+        setRunItTwiceOtherChoice(data.choice)
+        setRunItTwiceOtherName(data.playerName || '对手')
+      }
+      addLog(data.playerName || '玩家', `选择${data.choice === 'once' ? '跑一轮' : '跑两轮'}`, undefined, 'run-it-twice-choice')
+    }
+
+    const handleRunItTwiceDiceResult = (data: any) => {
+      if (data.gameState) {
+        setGameState(data.gameState)
+      }
+      if (data.reroll) {
+        setDiceResult(null)
+        setDiceIsTied(false)
+        setDiceReady({})
+        if (data.players) {
+          setDicePlayers(data.players)
+        }
+        return
+      }
+      if (data.needDice && data.players && !data.playerId) {
+        setShowDiceDialog(true)
+        setShowRunItTwiceDialog(false)
+        setDicePlayers(data.players)
+        setDiceReady({})
+        setDiceResult(null)
+        setDiceIsTied(false)
+        return
+      }
+      if (data.playerId) {
+        setDiceReady(prev => ({ ...prev, [data.playerId]: true }))
+      }
+      if (data.diceReady) {
+        setDiceReady(data.diceReady)
+      }
+      if (data.bothReady && data.diceResult) {
+        setDiceResult(data.diceResult)
+        setDiceIsTied(data.isTied || false)
+        addLog('系统', `骰子: ${data.diceResult.player1.value} vs ${data.diceResult.player2.value}${data.isTied ? ' (平局!)' : ` → ${data.finalChoice === 'once' ? '跑一轮' : '跑两轮'}`}`, undefined, 'run-it-twice-dice')
+      }
+    }
+
+    const handleRunItTwiceExecuting = (data: any) => {
+      if (data.gameState) {
+        setGameState(data.gameState)
+      }
+      addLog('系统', `执行${data.finalChoice === 'once' ? '跑一轮' : '跑两轮'}`, undefined, 'run-it-twice-executing')
+    }
+
+    const handleShowdownWithRunItTwice = (data: any) => {
+      setWinners(data.winners)
+      setShowResult(true)
+      if (data.allHands) {
+        setAllHands(data.allHands)
+      }
+      if (data.communityCards) {
+        setResultCommunityCards(data.communityCards)
+      }
+      if (data.runItTwiceBoard) {
+        setRunItTwiceBoard(data.runItTwiceBoard)
+      }
+      if (data.runItTwiceResults) {
+        setRunItTwiceResults(data.runItTwiceResults)
+      }
+      if (data.gameState) {
+        setGameState(data.gameState)
+      }
+      if (data.room) {
+        setCurrentRoom(data.room)
+        const player = data.room.players?.find((p: any) => p.id === myPlayerId)
+        if (player) {
+          setCurrentPlayer(player)
+        }
+      }
+      setShowRunItTwiceDialog(false)
+      setShowDiceDialog(false)
+      addLog('系统', 'showdown', undefined, 'showdown')
+      for (const w of data.winners) {
+        addLog(w.playerName, 'win', w.winAmount, 'showdown')
+      }
+    }
+
     on(ServerEvents.GAME_STARTED, handleGameStarted)
     on(ServerEvents.DEAL_CARDS, handleDealCards)
     on(ServerEvents.PLAYER_TURN, handlePlayerTurn)
     on(ServerEvents.ACTION_RESULT, handleActionResult)
-    on(ServerEvents.SHOWDOWN, handleShowdown)
+    on(ServerEvents.SHOWDOWN, handleShowdownWithRunItTwice)
     on(ServerEvents.HAND_RESULT, handleHandResult)
     on(ServerEvents.CHIPS_RECEIVED, handleChipsReceived)
     on(ServerEvents.ROOM_UPDATED, handleRoomUpdated)
@@ -235,6 +359,10 @@ export default function GamePage() {
     on(ServerEvents.VOTE_LEAVE_RESPONSE, handleVoteLeaveResponseEvent)
     on(ServerEvents.VOTE_LEAVE_ENDED, handleVoteLeaveEnded)
     on(ServerEvents.ROOM_LEFT, handleRoomLeft)
+    on(ServerEvents.RUN_IT_TWICE_ASK, handleRunItTwiceAsk)
+    on(ServerEvents.RUN_IT_TWICE_CHOICE_RESULT, handleRunItTwiceChoiceResult)
+    on(ServerEvents.RUN_IT_TWICE_DICE_RESULT, handleRunItTwiceDiceResult)
+    on(ServerEvents.RUN_IT_TWICE_EXECUTING, handleRunItTwiceExecuting)
 
     fetchGameState()
 
@@ -243,7 +371,7 @@ export default function GamePage() {
       off(ServerEvents.DEAL_CARDS, handleDealCards)
       off(ServerEvents.PLAYER_TURN, handlePlayerTurn)
       off(ServerEvents.ACTION_RESULT, handleActionResult)
-      off(ServerEvents.SHOWDOWN, handleShowdown)
+      off(ServerEvents.SHOWDOWN, handleShowdownWithRunItTwice)
       off(ServerEvents.HAND_RESULT, handleHandResult)
       off(ServerEvents.CHIPS_RECEIVED, handleChipsReceived)
       off(ServerEvents.ROOM_UPDATED, handleRoomUpdated)
@@ -254,12 +382,22 @@ export default function GamePage() {
       off(ServerEvents.VOTE_LEAVE_RESPONSE, handleVoteLeaveResponseEvent)
       off(ServerEvents.VOTE_LEAVE_ENDED, handleVoteLeaveEnded)
       off(ServerEvents.ROOM_LEFT, handleRoomLeft)
+      off(ServerEvents.RUN_IT_TWICE_ASK, handleRunItTwiceAsk)
+      off(ServerEvents.RUN_IT_TWICE_CHOICE_RESULT, handleRunItTwiceChoiceResult)
+      off(ServerEvents.RUN_IT_TWICE_DICE_RESULT, handleRunItTwiceDiceResult)
+      off(ServerEvents.RUN_IT_TWICE_EXECUTING, handleRunItTwiceExecuting)
     }
   }, [roomId, myPlayerId])
 
   const fetchGameState = async () => {
     try {
       const response = await fetch(`/api/rooms/${roomId}`)
+      if (!response.ok) {
+        addToast('房间不存在或已关闭', 'error')
+        reset()
+        navigate('/lobby')
+        return
+      }
       const data = await response.json()
       if (data.success && data.room) {
         setCurrentRoom(data.room)
@@ -268,6 +406,11 @@ export default function GamePage() {
           if (player) {
             setCurrentPlayer(player)
             setIsReady(player.isReady || false)
+          } else {
+            addToast('你已不在房间中', 'error')
+            reset()
+            navigate('/lobby')
+            return
           }
           if (data.room.gameState) {
             setGameState(data.room.gameState)
@@ -278,16 +421,29 @@ export default function GamePage() {
             setIsWaitingForStart(true)
           }
         }
+      } else {
+        addToast('房间不存在或已关闭', 'error')
+        reset()
+        navigate('/lobby')
       }
     } catch (error) {
       console.error('Failed to fetch game state:', error)
+      addToast('无法连接服务器', 'error')
+      reset()
+      navigate('/lobby')
     }
   }
 
   const handleLeaveGame = async () => {
-    if (currentRoom && currentRoom.players.length > 1) {
+    const myPlayer = currentRoom?.players?.find((p: any) => p.id === myPlayerId)
+    const hasPlayed = myPlayer?.hasPlayedHand
+    if (hasPlayed) {
       try {
-        await emit(ClientEvents.VOTE_LEAVE)
+        const result = await emit(ClientEvents.VOTE_LEAVE)
+        if (result?.directLeave) {
+          reset()
+          navigate('/lobby')
+        }
       } catch (error: any) {
         addToast(error.message || '发起投票失败', 'error')
       }
@@ -345,23 +501,6 @@ export default function GamePage() {
     }
   }
 
-  const handleStartGame = async () => {
-    if (isSubmitting) return
-    setIsSubmitting(true)
-    try {
-      const result = await emit(ClientEvents.START_GAME)
-      if (!result?.success) {
-        setMessage('无法开局：' + (result?.error || '未知原因'))
-        setTimeout(() => setMessage(''), 5000)
-      }
-    } catch (error: any) {
-      setMessage('无法开局：' + (error.message || '未知原因'))
-      setTimeout(() => setMessage(''), 5000)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   const handleAction = async (action: string, amount?: number) => {
     setIsMyTurn(false)
     setShowRaiseSlider(false)
@@ -373,14 +512,36 @@ export default function GamePage() {
     }
   }
 
-  const renderCard = (card: Card | null | undefined) => {
-    if (!card) return <div className="w-14 h-20 bg-white/10 rounded border border-white/20" />
+  const handleRunItTwiceChoice = async (choice: RunItTwiceChoice) => {
+    try {
+      setRunItTwiceMyChoice(choice)
+      await emit(ClientEvents.RUN_IT_TWICE_CHOICE, { choice })
+    } catch (error: any) {
+      setMessage(error.message || '选择失败')
+      setTimeout(() => setMessage(''), 3000)
+    }
+  }
+
+  const handleRollDice = async () => {
+    try {
+      await emit(ClientEvents.RUN_IT_TWICE_ROLL_DICE, {})
+    } catch (error: any) {
+      setMessage(error.message || '掷骰子失败')
+      setTimeout(() => setMessage(''), 3000)
+    }
+  }
+
+  const renderCard = (card: Card | null | undefined, small?: boolean) => {
+    const w = small ? 'w-8 h-12' : 'w-14 h-20'
+    const fontSize = small ? 'text-xs' : 'text-base'
+    const suitSize = small ? 'text-sm' : 'text-xl'
+    if (!card) return <div className={`${w} bg-white/10 rounded border border-white/20`} />
     const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
     const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
     return (
-      <div className={`w-14 h-20 bg-white rounded-lg border-2 border-gray-300 flex flex-col items-center justify-center shadow-md ${isRed ? 'text-red-600' : 'text-black'}`}>
-        <span className="font-bold text-base leading-tight">{card.rank}</span>
-        <span className="text-xl leading-tight">{suitSymbol[card.suit]}</span>
+      <div className={`${w} bg-white rounded-lg border-2 border-gray-300 flex flex-col items-center justify-center shadow-md ${isRed ? 'text-red-600' : 'text-black'}`}>
+        <span className={`font-bold ${fontSize} leading-tight`}>{card.rank}</span>
+        <span className={`${suitSize} leading-tight`}>{suitSymbol[card.suit]}</span>
       </div>
     )
   }
@@ -425,10 +586,8 @@ export default function GamePage() {
     return positions.slice(0, total)
   }
 
-  const isHost = currentRoom ? currentRoom.config.hostId === myPlayerId : false
-  const readyCount = currentRoom ? currentRoom.players.filter((p: any) => p.isReady).length : 0
-  const isRoomWaiting = currentRoom ? currentRoom.status !== 'playing' : true
-  const canStartGame = currentRoom ? readyCount >= 3 && isRoomWaiting : false
+  const isInVoteCooldown = voteCooldownRemaining > 0
+  const myPlayerHasPlayed = currentRoom?.players?.find((p: any) => p.id === myPlayerId)?.hasPlayedHand
 
   if (!currentRoom) {
     return (
@@ -446,17 +605,18 @@ export default function GamePage() {
             <h1 className="text-lg font-bold text-white">{currentRoom.config.roomName}</h1>
             <div className="flex gap-2">
               <button
-                onClick={handleLeaveGame}
-                className="px-3 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 text-sm"
+                onClick={isInVoteCooldown ? undefined : handleLeaveGame}
+                disabled={isInVoteCooldown}
+                className={`px-3 py-1 text-white rounded text-sm ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
               >
-                {currentRoom && currentRoom.players.length > 1 ? '投票离开' : '离开'}
+                {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
               </button>
             </div>
           </div>
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <div className="text-white text-2xl font-bold mb-4">等待庄家开始游戏</div>
-              <div className="text-white/60 text-sm mb-4">已准备 {readyCount}/3+ 人即可开局</div>
+              <div className="text-white text-2xl font-bold mb-4">等待玩家准备</div>
+              <div className="text-white/60 text-sm mb-4">所有人准备好后自动开局</div>
               <div className="space-y-2 mb-6">
                 {currentRoom.players.map((p: any) => (
                   <div key={p.id} className="flex items-center gap-2 text-lg justify-center">
@@ -484,20 +644,12 @@ export default function GamePage() {
                     取消准备
                   </button>
                 )}
-                {isHost && canStartGame && (
-                  <button
-                    onClick={handleStartGame}
-                    disabled={isSubmitting}
-                    className={`px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-bold text-lg animate-pulse ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    🎲 开局
-                  </button>
-                )}
                 <button
-                  onClick={handleLeaveGame}
-                  className="px-6 py-3 bg-red-700 text-white rounded-lg hover:bg-red-800 font-bold text-lg"
+                  onClick={isInVoteCooldown ? undefined : handleLeaveGame}
+                  disabled={isInVoteCooldown}
+                  className={`px-6 py-3 text-white rounded-lg font-bold text-lg ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-red-700 hover:bg-red-800'}`}
                 >
-                  {currentRoom && currentRoom.players.length > 1 ? '投票离开' : '离开'}
+                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
                 </button>
               </div>
             </div>
@@ -532,7 +684,7 @@ export default function GamePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-900 to-green-950 select-none overflow-hidden">
       {showVoteModal && voteInfo && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
           <div className="bg-gray-800 border border-gray-600 rounded-xl w-full max-w-md p-6">
             <h2 className="text-2xl font-bold text-white mb-4 text-center">
               离开房间投票
@@ -608,34 +760,50 @@ export default function GamePage() {
               记分牌
             </button>
             <button
-              onClick={handleLeaveGame}
-              className="px-3 py-1 bg-gray-600 text-white rounded hover:bg-gray-700 text-sm"
+              onClick={isInVoteCooldown ? undefined : handleLeaveGame}
+              disabled={isInVoteCooldown}
+              className={`px-3 py-1 text-white rounded text-sm ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
             >
-              {currentRoom && currentRoom.players.length > 1 ? '投票离开' : '离开'}
+              {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
             </button>
           </div>
         </div>
 
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex overflow-hidden relative">
           {showActionLog && (
-            <div className="w-56 flex-shrink-0">
+            <div className="hidden md:block w-56 flex-shrink-0">
               <ActionLog logs={actionLogs} onClear={clearLogs} />
             </div>
           )}
+          {showActionLog && (
+            <div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setShowActionLog(false)}>
+              <div className="absolute left-0 top-0 bottom-0 w-72" onClick={e => e.stopPropagation()}>
+                <ActionLog logs={actionLogs} onClear={clearLogs} />
+              </div>
+            </div>
+          )}
           <div className="flex-1 relative">
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="relative w-full max-w-3xl aspect-[16/10]">
+          <div className="absolute inset-0 flex items-center justify-center p-1 md:p-4">
+            <div className="relative w-full max-w-3xl aspect-[4/3] md:aspect-[16/10]">
               <div className="absolute inset-[8%] bg-green-800/80 rounded-[50%] border-8 border-green-700 shadow-2xl">
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <div className="text-yellow-300 font-bold text-lg mb-1">
+                  <div className="text-yellow-300 font-bold text-sm md:text-lg mb-0.5 md:mb-1">
                     {getPhaseName(gameState.phase)}
                   </div>
-                  <div className="text-white font-bold text-xl mb-2">
+                  <div className="text-white font-bold text-base md:text-xl mb-1 md:mb-2">
                     底池: ${totalPot}
                   </div>
-                  <div className="flex gap-1.5 mb-2">
+                  <div className="flex gap-1 md:gap-1.5 mb-1 md:mb-2">
                     {[0, 1, 2, 3, 4].map(i => (
-                      <div key={i}>
+                      <div key={i} className="md:hidden">
+                        {i < (gameState.communityCards?.length || 0)
+                          ? renderCard(gameState.communityCards[i], true)
+                          : <div className="w-8 h-12 border-2 border-dashed border-green-500/30 rounded-lg" />
+                        }
+                      </div>
+                    ))}
+                    {[0, 1, 2, 3, 4].map(i => (
+                      <div key={`md-${i}`} className="hidden md:block">
                         {i < (gameState.communityCards?.length || 0)
                           ? renderCard(gameState.communityCards[i])
                           : <div className="w-14 h-20 border-2 border-dashed border-green-500/30 rounded-lg" />
@@ -644,7 +812,7 @@ export default function GamePage() {
                     ))}
                   </div>
                   {(gameState.currentBet || 0) > 0 && (
-                    <div className="text-white/70 text-sm">当前注: ${gameState.currentBet}</div>
+                    <div className="text-white/70 text-xs md:text-sm">当前注: ${gameState.currentBet}</div>
                   )}
                 </div>
               </div>
@@ -663,74 +831,74 @@ export default function GamePage() {
                   <div
                     key={player.id}
                     className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all duration-300 ${
-                      isCurrentTurn && !isFolded ? 'scale-110' : ''
+                      isCurrentTurn && !isFolded ? 'scale-105 md:scale-110' : ''
                     } ${isFolded ? 'opacity-40' : ''}`}
                     style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
                   >
                     <div className="flex flex-col items-center">
                       {bet > 0 && (
-                        <div className="text-yellow-300 text-xs font-bold mb-1 bg-black/50 px-2 py-0.5 rounded">
+                        <div className="text-yellow-300 text-[10px] md:text-xs font-bold mb-0.5 md:mb-1 bg-black/50 px-1.5 md:px-2 py-0.5 rounded">
                           ${bet}
                         </div>
                       )}
                       <div className={`relative ${isCurrentTurn && !isFolded ? 'ring-2 ring-yellow-400 rounded-full' : ''}`}>
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-sm ${
+                        <div className={`w-8 h-8 md:w-12 md:h-12 rounded-full flex items-center justify-center text-white font-bold text-xs md:text-sm ${
                           isMe ? 'bg-green-600' : 'bg-gray-600'
                         }`}>
                           {player.name[0]}
                         </div>
                         {role && getRoleName(role) && (
-                          <div className="absolute -top-1 -left-1 w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold">
+                          <div className="absolute -top-1 -left-1 w-4 h-4 md:w-5 md:h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold">
                             {getRoleName(role)}
                           </div>
                         )}
                         {isAllIn && (
-                          <div className="absolute -top-1 -right-1 bg-red-600 text-white text-[8px] px-1 rounded-full font-bold">
+                          <div className="absolute -top-1 -right-1 bg-red-600 text-white text-[6px] md:text-[8px] px-0.5 md:px-1 rounded-full font-bold">
                             ALL IN
                           </div>
                         )}
                         {isWaitingForStart && player.isReady && (
-                          <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-green-500 text-white rounded-full flex items-center justify-center text-[10px] font-bold shadow">
+                          <div className="absolute -bottom-1 -right-1 w-4 h-4 md:w-5 md:h-5 bg-green-500 text-white rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold shadow">
                             ✓
                           </div>
                         )}
                       </div>
                       <div className="text-center mt-0.5">
-                        <div className="text-white text-[11px] font-bold truncate max-w-[70px]">
+                        <div className="text-white text-[9px] md:text-[11px] font-bold truncate max-w-[50px] md:max-w-[70px]">
                           {player.name}{isMe ? '(你)' : ''}
                         </div>
-                        <div className="text-yellow-300 text-[11px] font-bold">${player.chips}</div>
-                        {isFolded && <div className="text-red-400 text-[10px]">弃牌</div>}
+                        <div className="text-yellow-300 text-[9px] md:text-[11px] font-bold">${player.chips}</div>
+                        {isFolded && <div className="text-red-400 text-[8px] md:text-[10px]">弃牌</div>}
                         {isCurrentTurn && !isFolded && !isMe && (
-                          <div className="text-yellow-400 text-[10px] animate-pulse">思考中</div>
+                          <div className="text-yellow-400 text-[8px] md:text-[10px] animate-pulse">思考中</div>
                         )}
                       </div>
                       {isMe && myCards && (
-                        <div className="flex gap-1 mt-1">
+                        <div className="flex gap-0.5 md:gap-1 mt-0.5 md:mt-1">
                           {myCards.map((card, ci) => {
                             const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
                             const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
                             return (
-                              <div key={ci} className={`w-14 h-20 bg-white rounded-lg border-2 border-gray-300 flex flex-col items-center justify-center shadow-md ${isRed ? 'text-red-600' : 'text-black'}`}>
-                                <span className="font-bold text-base leading-tight">{card.rank}</span>
-                                <span className="text-xl leading-tight">{suitSymbol[card.suit]}</span>
+                              <div key={ci} className={`w-8 h-12 md:w-14 md:h-20 bg-white rounded-lg border-2 border-gray-300 flex flex-col items-center justify-center shadow-md ${isRed ? 'text-red-600' : 'text-black'}`}>
+                                <span className="font-bold text-xs md:text-base leading-tight">{card.rank}</span>
+                                <span className="text-sm md:text-xl leading-tight">{suitSymbol[card.suit]}</span>
                               </div>
                             )
                           })}
                         </div>
                       )}
                       {!isMe && status === 'playing' && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && (
-                        <div className="flex gap-1 mt-1">
-                          <div className="w-14 h-20 bg-gradient-to-br from-blue-700 to-blue-900 rounded-lg border-2 border-blue-400 flex items-center justify-center shadow-md">
-                            <span className="text-blue-300 text-lg">?</span>
+                        <div className="flex gap-0.5 md:gap-1 mt-0.5 md:mt-1">
+                          <div className="w-8 h-12 md:w-14 md:h-20 bg-gradient-to-br from-blue-700 to-blue-900 rounded-lg border-2 border-blue-400 flex items-center justify-center shadow-md">
+                            <span className="text-blue-300 text-xs md:text-lg">?</span>
                           </div>
-                          <div className="w-14 h-20 bg-gradient-to-br from-blue-700 to-blue-900 rounded-lg border-2 border-blue-400 flex items-center justify-center shadow-md">
-                            <span className="text-blue-300 text-lg">?</span>
+                          <div className="w-8 h-12 md:w-14 md:h-20 bg-gradient-to-br from-blue-700 to-blue-900 rounded-lg border-2 border-blue-400 flex items-center justify-center shadow-md">
+                            <span className="text-blue-300 text-xs md:text-lg">?</span>
                           </div>
                         </div>
                       )}
                       {!isMe && (gameState.phase === 'showdown' || gameState.phase === 'ended') && status !== 'folded' && (
-                        <div className="text-white/40 text-[9px] mt-0.5">已摊牌</div>
+                        <div className="text-white/40 text-[7px] md:text-[9px] mt-0.5">已摊牌</div>
                       )}
                     </div>
                   </div>
@@ -739,7 +907,7 @@ export default function GamePage() {
             </div>
           </div>
           </div>
-          <div className="w-64 flex-shrink-0">
+          <div className="hidden md:block w-64 flex-shrink-0">
             <ChatBox />
           </div>
         </div>
@@ -749,35 +917,35 @@ export default function GamePage() {
         )}
 
         {isMyTurn && !showResult && (
-          <div className="bg-gray-900/90 border-t border-gray-700 p-3">
-            <div className="text-center text-white/60 text-sm mb-2">
+          <div className="bg-gray-900/90 border-t border-gray-700 p-2 md:p-3">
+            <div className="text-center text-white/60 text-xs md:text-sm mb-1 md:mb-2">
               轮到你行动 {toCall > 0 ? `(需跟注 $${toCall})` : '(可以过牌)'}
             </div>
-            <div className="flex justify-center gap-2 flex-wrap mb-2">
+            <div className="flex justify-center gap-1.5 md:gap-2 flex-wrap mb-1 md:mb-2">
               <button
                 onClick={() => handleAction('fold')}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold text-sm"
+                className="px-3 md:px-4 py-1.5 md:py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-bold text-xs md:text-sm"
               >
                 弃牌
               </button>
               {toCall === 0 ? (
                 <button
                   onClick={() => handleAction('check')}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold text-sm"
+                  className="px-3 md:px-4 py-1.5 md:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-bold text-xs md:text-sm"
                 >
                   过牌
                 </button>
               ) : toCall >= myChips ? (
                 <button
                   onClick={() => handleAction('all-in')}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-bold text-sm"
+                  className="px-3 md:px-4 py-1.5 md:py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-bold text-xs md:text-sm"
                 >
                   全押 ${myChips}
                 </button>
               ) : (
                 <button
                   onClick={() => handleAction('call')}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-bold text-sm"
+                  className="px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-bold text-xs md:text-sm"
                 >
                   跟注 ${toCall}
                 </button>
@@ -788,7 +956,7 @@ export default function GamePage() {
                     setRaiseAmount(minRaise)
                     setShowRaiseSlider(!showRaiseSlider)
                   }}
-                  className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors font-bold text-sm"
+                  className="px-3 md:px-4 py-1.5 md:py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors font-bold text-xs md:text-sm"
                 >
                   加注
                 </button>
@@ -796,15 +964,15 @@ export default function GamePage() {
               {toCall > 0 && toCall < myChips && (
                 <button
                   onClick={() => handleAction('all-in')}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-bold text-sm"
+                  className="px-3 md:px-4 py-1.5 md:py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-bold text-xs md:text-sm"
                 >
                   全押 ${myChips}
                 </button>
               )}
             </div>
             {showRaiseSlider && (
-              <div className="flex items-center gap-3 px-4 py-2 bg-gray-800 rounded-lg">
-                <span className="text-yellow-300 font-bold text-sm min-w-[50px]">${raiseAmount}</span>
+              <div className="flex items-center gap-2 md:gap-3 px-2 md:px-4 py-1.5 md:py-2 bg-gray-800 rounded-lg">
+                <span className="text-yellow-300 font-bold text-xs md:text-sm min-w-[40px] md:min-w-[50px]">${raiseAmount}</span>
                 <input
                   type="range"
                   min={minRaise}
@@ -816,26 +984,26 @@ export default function GamePage() {
                 <div className="flex gap-1">
                   <button
                     onClick={() => setRaiseAmount(minRaise)}
-                    className="px-2 py-1 bg-white/10 rounded text-white/80 text-xs hover:bg-white/20"
+                    className="px-1.5 md:px-2 py-0.5 md:py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
                   >
                     Min
                   </button>
                   <button
                     onClick={() => setRaiseAmount(Math.floor(maxRaise / 2))}
-                    className="px-2 py-1 bg-white/10 rounded text-white/80 text-xs hover:bg-white/20"
+                    className="px-1.5 md:px-2 py-0.5 md:py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
                   >
                     1/2
                   </button>
                   <button
                     onClick={() => setRaiseAmount(maxRaise)}
-                    className="px-2 py-1 bg-white/10 rounded text-white/80 text-xs hover:bg-white/20"
+                    className="px-1.5 md:px-2 py-0.5 md:py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
                   >
                     Max
                   </button>
                 </div>
                 <button
                   onClick={() => handleAction('raise', raiseAmount)}
-                  className="px-4 py-1.5 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-bold text-sm"
+                  className="px-3 md:px-4 py-1 md:py-1.5 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-bold text-xs md:text-sm"
                 >
                   确认
                 </button>
@@ -845,38 +1013,38 @@ export default function GamePage() {
         )}
 
         {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && !amIInCurrentGame && (
-          <div className="bg-gray-900/90 border-t border-gray-700 p-3">
-            <div className="text-center text-yellow-300 text-sm">
+          <div className="bg-gray-900/90 border-t border-gray-700 p-2 md:p-3">
+            <div className="text-center text-yellow-300 text-xs md:text-sm">
               ⏳ 当前局进行中，请等待本局结束后加入
             </div>
-            <div className="flex justify-center gap-3 mt-2">
+            <div className="flex justify-center gap-2 md:gap-3 mt-1.5 md:mt-2">
               {!isReady && (
                 <button
                   onClick={handleReady}
                   disabled={isSubmitting}
-                  className={`px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   准备下一局
                 </button>
               )}
               {isReady && (
-                <span className="text-green-400 text-sm">✅ 已准备，等待本局结束...</span>
+                <span className="text-green-400 text-xs md:text-sm">✅ 已准备，等待本局结束...</span>
               )}
             </div>
           </div>
         )}
         {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && amIInCurrentGame && (
-          <div className="text-center text-white/40 text-sm py-3 bg-black/30">
+          <div className="text-center text-white/40 text-xs md:text-sm py-2 md:py-3 bg-black/30">
             等待其他玩家行动...
           </div>
         )}
 
         {isWaitingForStart && (
-          <div className="bg-gray-900/90 border-t border-gray-700 p-3">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
+          <div className="bg-gray-900/90 border-t border-gray-700 p-2 md:p-3">
+            <div className="flex items-center justify-between gap-2 md:gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5 md:gap-2 overflow-x-auto">
                 {currentRoom.players.map((p: any) => (
-                  <div key={p.id} className="flex items-center gap-1 text-sm">
+                  <div key={p.id} className="flex items-center gap-1 text-xs md:text-sm whitespace-nowrap">
                     <span className={p.isReady ? 'text-green-400' : 'text-white/40'}>
                       {p.isReady ? '✅' : '⏳'}
                     </span>
@@ -884,12 +1052,12 @@ export default function GamePage() {
                   </div>
                 ))}
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-1.5 md:gap-2">
                 {isReady && (
                   <button
                     onClick={handleCancelReady}
                     disabled={isSubmitting}
-                    className={`px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`px-3 md:px-4 py-1.5 md:py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     取消准备
                   </button>
@@ -898,47 +1066,157 @@ export default function GamePage() {
                   <button
                     onClick={handleReady}
                     disabled={isSubmitting}
-                    className={`px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     准备下一局
                   </button>
                 )}
-                {isHost && canStartGame && (
-                  <button
-                    onClick={handleStartGame}
-                    disabled={isSubmitting}
-                    className={`px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-bold text-sm animate-pulse ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    🎲 开局
-                  </button>
-                )}
                 <button
-                  onClick={handleLeaveGame}
-                  className="px-4 py-2 bg-red-700 text-white rounded-lg hover:bg-red-800 font-bold text-sm"
+                  onClick={isInVoteCooldown ? undefined : handleLeaveGame}
+                  disabled={isInVoteCooldown}
+                  className={`px-3 md:px-4 py-1.5 md:py-2 text-white rounded-lg font-bold text-xs md:text-sm ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-red-700 hover:bg-red-800'}`}
                 >
-                  {currentRoom && currentRoom.players.length > 1 ? '投票离开' : '离开'}
+                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {showResult && allHands && allHands.length > 0 && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-xl p-6 max-w-lg w-full mx-4 border border-gray-600 max-h-[85vh] overflow-y-auto">
-              <h2 className="text-2xl font-bold text-white text-center mb-4">🏆 本局结束</h2>
+        {showRunItTwiceDialog && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-2 md:p-4">
+            <div className="bg-gray-800 rounded-xl p-4 md:p-6 max-w-md w-full mx-2 md:mx-4 border border-yellow-600/50">
+              <h2 className="text-xl md:text-2xl font-bold text-yellow-300 text-center mb-2 md:mb-3">🎲 双人 All-In!</h2>
+              <p className="text-white/80 text-center text-sm md:text-base mb-3 md:mb-4">
+                选择跑一轮还是跑两轮？
+              </p>
 
-              {resultCommunityCards.length > 0 && (
-                <div className="mb-4 p-3 bg-blue-900/30 rounded-lg border border-blue-600/30">
-                  <p className="text-white/60 text-xs mb-2 text-center">公共牌</p>
-                  <div className="flex gap-1.5 justify-center">
+              {runItTwiceMyChoice ? (
+                <div className="text-center space-y-2 md:space-y-3">
+                  <div className="text-white/60 text-xs md:text-sm">
+                    你选择了：<span className={runItTwiceMyChoice === 'once' ? 'text-blue-400 font-bold' : 'text-yellow-400 font-bold'}>
+                      {runItTwiceMyChoice === 'once' ? '跑一轮' : '跑两轮'}
+                    </span>
+                  </div>
+                  {runItTwiceOtherChoice ? (
+                    <div className="text-white/60 text-xs md:text-sm">
+                      {runItTwiceOtherName}选择了：<span className={runItTwiceOtherChoice === 'once' ? 'text-blue-400 font-bold' : 'text-yellow-400 font-bold'}>
+                        {runItTwiceOtherChoice === 'once' ? '跑一轮' : '跑两轮'}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-white/40 text-xs md:text-sm animate-pulse">
+                      等待对手选择...
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex gap-3 md:gap-4">
+                  <button
+                    onClick={() => handleRunItTwiceChoice('once')}
+                    className="flex-1 py-3 md:py-4 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-bold text-base md:text-lg"
+                  >
+                    跑一轮
+                  </button>
+                  <button
+                    onClick={() => handleRunItTwiceChoice('twice')}
+                    className="flex-1 py-3 md:py-4 bg-yellow-600 text-white rounded-xl hover:bg-yellow-700 transition-colors font-bold text-base md:text-lg"
+                  >
+                    跑两轮
+                  </button>
+                </div>
+              )}
+
+              <div className="mt-3 md:mt-4 text-white/30 text-[10px] md:text-xs text-center">
+                跑两轮：底池平分两半，各发一套公共牌分别摊牌
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showDiceDialog && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-2 md:p-4">
+            <div className="bg-gray-800 rounded-xl p-4 md:p-6 max-w-md w-full mx-2 md:mx-4 border border-purple-600/50">
+              <h2 className="text-xl md:text-2xl font-bold text-purple-300 text-center mb-2 md:mb-3">🎲 掷骰子决定</h2>
+              <p className="text-white/80 text-center text-xs md:text-sm mb-3 md:mb-4">
+                两人选择不同，掷骰子决定！点数大者的选择生效
+              </p>
+
+              <div className="flex justify-center gap-4 md:gap-6 mb-3 md:mb-4">
+                {dicePlayers.map((p, i) => {
+                  const isMe = p.id === myPlayerId
+                  const hasRolled = diceReady[p.id]
+                  const diceValue = i === 0 ? diceResult?.player1?.value : diceResult?.player2?.value
+                  return (
+                    <div key={p.id} className="flex flex-col items-center gap-1.5 md:gap-2">
+                      <div className="text-white font-bold text-xs md:text-sm">
+                        {p.name}{isMe ? '(你)' : ''}
+                      </div>
+                      <div className={`w-14 h-14 md:w-16 md:h-16 rounded-xl flex items-center justify-center text-2xl md:text-3xl font-bold border-2 transition-all duration-300 ${
+                        hasRolled
+                          ? 'bg-purple-700 border-purple-400 text-white scale-110'
+                          : 'bg-gray-700 border-gray-500 text-gray-400'
+                      }`}>
+                        {diceValue || '?'}
+                      </div>
+                      {hasRolled ? (
+                        <span className="text-green-400 text-[10px] md:text-xs">已掷骰</span>
+                      ) : isMe ? (
+                        <button
+                          onClick={handleRollDice}
+                          className="px-3 md:px-4 py-1.5 md:py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-xs md:text-sm animate-pulse"
+                        >
+                          掷骰子
+                        </button>
+                      ) : (
+                        <span className="text-white/40 text-[10px] md:text-xs animate-pulse">等待中...</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {diceResult && !diceIsTied && (
+                <div className="text-center">
+                  <div className="text-yellow-300 font-bold text-sm md:text-base mb-1">
+                    {diceResult.finalChoice === 'once' ? '跑一轮' : '跑两轮'}！
+                  </div>
+                  <div className="text-white/50 text-[10px] md:text-xs">
+                    {diceResult.player1.value > diceResult.player2.value
+                      ? dicePlayers[0]?.name
+                      : dicePlayers[1]?.name
+                    }点数更大，选择生效
+                  </div>
+                </div>
+              )}
+
+              {diceIsTied && (
+                <div className="text-center">
+                  <div className="text-red-400 font-bold text-sm md:text-base animate-pulse">
+                    平局！重新掷骰子...
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {showResult && allHands && allHands.length > 0 && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-2 md:p-4">
+            <div className="bg-gray-800 rounded-xl p-3 md:p-6 max-w-lg w-full mx-2 md:mx-4 border border-gray-600 max-h-[90vh] md:max-h-[85vh] overflow-y-auto">
+              <h2 className="text-xl md:text-2xl font-bold text-white text-center mb-3 md:mb-4">🏆 本局结束</h2>
+
+              {resultCommunityCards.length > 0 && !(runItTwiceBoard && runItTwiceBoard.length === 2) && (
+                <div className="mb-3 md:mb-4 p-2 md:p-3 bg-blue-900/30 rounded-lg border border-blue-600/30">
+                  <p className="text-white/60 text-[10px] md:text-xs mb-1 md:mb-2 text-center">公共牌</p>
+                  <div className="flex gap-1 md:gap-1.5 justify-center">
                     {resultCommunityCards.map((card, i) => {
                       const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
                       const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
                       return (
-                        <div key={i} className={`w-11 h-16 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
-                          <span className="font-bold text-sm">{card.rank}</span>
-                          <span className="text-base">{suitSymbol[card.suit]}</span>
+                        <div key={i} className={`w-8 h-12 md:w-11 md:h-16 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
+                          <span className="font-bold text-[10px] md:text-sm">{card.rank}</span>
+                          <span className="text-xs md:text-base">{suitSymbol[card.suit]}</span>
                         </div>
                       )
                     })}
@@ -946,12 +1224,88 @@ export default function GamePage() {
                 </div>
               )}
 
+              {runItTwiceBoard && runItTwiceBoard.length === 2 && (() => {
+                const sharedCount = resultCommunityCards.length
+                return (
+                  <div className="mb-3 md:mb-4 space-y-3 md:space-y-4">
+                    <p className="text-yellow-300/80 text-[10px] md:text-xs text-center font-bold">🎲 跑两轮结果</p>
+                    {runItTwiceBoard.map((board, boardIdx) => {
+                      const roundResult = runItTwiceResults?.[boardIdx]
+                      const roundWinnerIds = roundResult?.winnerIds || []
+                      const sharedCards = board.slice(0, sharedCount)
+                      const newCards = board.slice(sharedCount)
+                      return (
+                        <div key={boardIdx} className="p-2 md:p-3 bg-purple-900/30 rounded-lg border border-purple-600/30">
+                          <p className="text-white/60 text-[10px] md:text-xs mb-1.5 md:mb-2 text-center">
+                            第{boardIdx + 1}轮 {roundResult ? `(底池 $${roundResult.potAmount})` : ''}
+                          </p>
+                          <div className="flex items-center justify-center gap-2 md:gap-3">
+                            {sharedCards.length > 0 && (
+                              <div className="p-1.5 md:p-2 bg-blue-900/40 rounded-md border border-blue-500/30">
+                                <div className="flex gap-1 md:gap-1.5 justify-center">
+                                  {sharedCards.map((card, i) => {
+                                    const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
+                                    const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                                    return (
+                                      <div key={i} className={`w-7 h-10 md:w-10 md:h-14 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
+                                        <span className="font-bold text-[9px] md:text-xs">{card.rank}</span>
+                                        <span className="text-[10px] md:text-sm">{suitSymbol[card.suit]}</span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                            {newCards.length > 0 && (
+                              <div className="p-1.5 md:p-2 bg-yellow-900/40 rounded-md border border-yellow-500/30">
+                                <div className="flex gap-1 md:gap-1.5 justify-center">
+                                  {newCards.map((card, i) => {
+                                    const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
+                                    const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                                    return (
+                                      <div key={i} className={`w-7 h-10 md:w-10 md:h-14 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
+                                        <span className="font-bold text-[9px] md:text-xs">{card.rank}</span>
+                                        <span className="text-[10px] md:text-sm">{suitSymbol[card.suit]}</span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          {roundResult && roundWinnerIds.length > 0 && (
+                            <div className="mt-1.5 md:mt-2 space-y-0.5 md:space-y-1">
+                              {allHands.filter(h => h.roundHandRanks && h.roundHandRanks.length === 2).map(h => {
+                                const isRoundWinner = roundWinnerIds.includes(h.playerId)
+                                const isTie = roundWinnerIds.length > 1 && isRoundWinner
+                                const roundLabel = isTie ? '平局' : (isRoundWinner ? '胜' : '负')
+                                const labelColor = isTie ? 'text-blue-300' : (isRoundWinner ? 'text-green-400' : 'text-red-400/70')
+                                return (
+                                  <div key={h.playerId} className={`flex items-center justify-center gap-1 md:gap-1.5 text-[9px] md:text-xs ${isRoundWinner ? 'text-yellow-300' : 'text-white/50'}`}>
+                                    <span className="font-bold">{h.playerName}</span>
+                                    <span className={isRoundWinner ? 'text-yellow-400 font-bold' : 'text-white/40'}>
+                                      {h.roundHandRanks![boardIdx]}
+                                    </span>
+                                    <span className={`${labelColor} font-bold`}>{roundLabel}</span>
+                                    {isRoundWinner && <span className="text-green-400/80">+${roundResult.winAmount}</span>}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
+
               {allHands.length > 0 ? (
-                <div className="space-y-2 mb-4">
+                <div className="space-y-1.5 md:space-y-2 mb-3 md:mb-4">
                   {allHands.map((hand, i) => {
                     const isMe = hand.playerId === myPlayerId
                     return (
-                      <div key={i} className={`p-3 rounded-lg border ${
+                      <div key={i} className={`p-2 md:p-3 rounded-lg border ${
                         hand.isWinner
                           ? 'bg-yellow-900/30 border-yellow-600/30'
                           : isMe
@@ -959,48 +1313,70 @@ export default function GamePage() {
                             : 'bg-white/5 border-white/10'
                       }`}>
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1 md:gap-2">
                             {hand.isWinner && <span className="text-yellow-400">🏆</span>}
-                            <span className={`font-bold ${hand.isWinner ? 'text-yellow-300' : 'text-white'}`}>
+                            <span className={`font-bold text-xs md:text-sm ${hand.isWinner ? 'text-yellow-300' : 'text-white'}`}>
                               {hand.playerName} {isMe ? '(你)' : ''}
                             </span>
                             {hand.isWinner && hand.potType && hand.potType !== 'main' && (
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-300 border border-purple-600/30">
+                              <span className="text-[8px] md:text-xs px-1 md:px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-300 border border-purple-600/30">
                                 {hand.potType === 'both' ? '主池+边池' : '边池'}
                               </span>
                             )}
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-sm font-bold ${hand.isWinner ? 'text-yellow-300' : 'text-white/60'}`}>
-                              {hand.handRank}
-                            </span>
+                          <div className="flex items-center gap-1 md:gap-2">
+                            {hand.roundHandRanks && hand.roundHandRanks.length === 2 ? (
+                              <div className="flex items-center gap-1 md:gap-1.5">
+                                {hand.roundHandRanks.map((rank, ri) => {
+                                  const rr = runItTwiceResults?.[ri]
+                                  const isWinner = rr?.winnerIds.includes(hand.playerId)
+                                  const isTie = rr && rr.winnerIds.length > 1 && isWinner
+                                  const label = isTie ? '平' : (isWinner ? '胜' : '负')
+                                  const labelColor = isTie ? 'text-blue-300' : (isWinner ? 'text-green-400' : 'text-red-400/70')
+                                  const bg = ri === 0 ? 'bg-blue-900/50 border-blue-500/30' : 'bg-yellow-900/50 border-yellow-500/30'
+                                  return (
+                                    <span key={ri} className={`text-[9px] md:text-xs font-bold px-1 md:px-1.5 py-0.5 rounded border ${bg} ${hand.isWinner ? 'text-yellow-300' : 'text-white/70'}`}>
+                                      R{ri + 1}: {rank} <span className={labelColor}>{label}</span>
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            ) : (
+                              <span className={`text-[10px] md:text-sm font-bold ${hand.isWinner ? 'text-yellow-300' : 'text-white/60'}`}>
+                                {hand.handRank}
+                              </span>
+                            )}
                             {hand.isWinner && hand.winAmount !== undefined && (
-                              <span className="text-green-400 font-bold text-sm">
+                              <span className="text-green-400 font-bold text-[10px] md:text-sm">
                                 +${hand.winAmount}
                               </span>
                             )}
                           </div>
                         </div>
                         {hand.holeCards && hand.holeCards.length > 0 && (
-                          <div className="flex items-center gap-1.5 mt-2">
-                            <span className="text-white/40 text-xs mr-1">手牌:</span>
+                          <div className="flex items-center gap-1 md:gap-1.5 mt-1 md:mt-2">
+                            <span className="text-white/40 text-[9px] md:text-xs mr-0.5 md:mr-1">手牌:</span>
                             {hand.holeCards.map((card, ci) => {
                               const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
                               const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
                               return (
-                                <div key={ci} className={`w-10 h-14 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
-                                  <span className="font-bold text-xs">{card.rank}</span>
-                                  <span className="text-sm">{suitSymbol[card.suit]}</span>
+                                <div key={ci} className={`w-7 h-10 md:w-10 md:h-14 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
+                                  <span className="font-bold text-[9px] md:text-xs">{card.rank}</span>
+                                  <span className="text-[10px] md:text-sm">{suitSymbol[card.suit]}</span>
                                 </div>
                               )
                             })}
-                            {hand.handDescription && hand.handRank !== '弃牌' && hand.handRank !== '其他玩家弃牌' && (
-                              <span className="text-white/50 text-xs ml-2">→ {hand.handDescription}</span>
-                            )}
+                            {hand.roundHandRanks && hand.roundHandRanks.length === 2 ? (
+                              <span className="text-white/50 text-[8px] md:text-xs ml-1 md:ml-2">
+                                → {hand.handDescription}
+                              </span>
+                            ) : hand.handDescription && hand.handRank !== '弃牌' && hand.handRank !== '其他玩家弃牌' ? (
+                              <span className="text-white/50 text-[8px] md:text-xs ml-1 md:ml-2">→ {hand.handDescription}</span>
+                            ) : null}
                           </div>
                         )}
                         {hand.handRank === '弃牌' && (
-                          <div className="text-red-400/60 text-xs mt-1">弃牌</div>
+                          <div className="text-red-400/60 text-[9px] md:text-xs mt-0.5 md:mt-1">弃牌</div>
                         )}
                       </div>
                     )
@@ -1028,17 +1404,17 @@ export default function GamePage() {
                 </>
               )}
 
-              <div className="mb-4">
-                <div className="text-white/60 text-sm mb-2 text-center">本局盈亏</div>
+              <div className="mb-3 md:mb-4">
+                <div className="text-white/60 text-xs md:text-sm mb-1 md:mb-2 text-center">本局盈亏</div>
                 {players.map(p => {
                   const handInfo = allHands.find((h: any) => h.playerId === p.id)
                   const profit = handInfo?.netWin !== undefined ? handInfo.netWin : 0
                   return (
-                    <div key={p.id} className="flex justify-between text-white text-sm py-1">
+                    <div key={p.id} className="flex justify-between text-white text-xs md:text-sm py-0.5 md:py-1">
                       <span>{p.name} {p.id === myPlayerId ? '(你)' : ''}</span>
                       <span>
                         <span className="text-yellow-300">${p.chips}</span>
-                        <span className={`ml-2 ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        <span className={`ml-1 md:ml-2 ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                           ({profit >= 0 ? '+' : ''}{profit})
                         </span>
                       </span>
@@ -1047,19 +1423,20 @@ export default function GamePage() {
                 })}
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex gap-2 md:gap-3">
                 <button
                   onClick={handleReady}
                   disabled={isSubmitting}
-                  className={`flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`flex-1 px-4 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   准备下一局
                 </button>
                 <button
-                  onClick={handleLeaveGame}
-                  className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-lg"
+                  onClick={isInVoteCooldown ? undefined : handleLeaveGame}
+                  disabled={isInVoteCooldown}
+                  className={`px-4 md:px-6 py-2 md:py-3 text-white rounded-lg font-bold text-sm md:text-lg ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
                 >
-                  {currentRoom && currentRoom.players.length > 1 ? '投票离开' : '离开'}
+                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
                 </button>
               </div>
             </div>
@@ -1067,10 +1444,10 @@ export default function GamePage() {
         )}
 
         {showScoreboard && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-xl p-6 max-w-md w-full mx-4 border border-gray-600">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-2xl font-bold text-white">记分牌</h2>
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-2 md:p-4">
+            <div className="bg-gray-800 rounded-xl p-3 md:p-6 max-w-md w-full mx-2 md:mx-4 border border-gray-600">
+              <div className="flex justify-between items-center mb-3 md:mb-4">
+                <h2 className="text-xl md:text-2xl font-bold text-white">记分牌</h2>
                 <button
                   onClick={() => setShowScoreboard(false)}
                   className="text-white/60 hover:text-white text-xl"
@@ -1079,31 +1456,31 @@ export default function GamePage() {
                 </button>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5 md:space-y-2">
                 {[...players]
                   .sort((a, b) => b.chips - a.chips)
                   .map((p, idx) => {
                     const profit = p.chips - (p.totalBuyIn || initialChips)
                     const rebuyCount = Math.max(0, Math.floor(((p.totalBuyIn || initialChips) - initialChips) / initialChips))
                     return (
-                      <div key={p.id} className={`flex items-center justify-between p-3 rounded-lg ${
+                      <div key={p.id} className={`flex items-center justify-between p-2 md:p-3 rounded-lg ${
                         p.id === myPlayerId ? 'bg-green-900/40 border border-green-600/30' : 'bg-white/5'
                       }`}>
-                        <div className="flex items-center gap-3">
-                          <span className="text-white/40 font-bold w-6">#{idx + 1}</span>
+                        <div className="flex items-center gap-2 md:gap-3">
+                          <span className="text-white/40 font-bold w-5 md:w-6 text-xs md:text-sm">#{idx + 1}</span>
                           <div>
-                            <div className="text-white font-bold text-sm">
+                            <div className="text-white font-bold text-xs md:text-sm">
                               {p.name} {p.id === myPlayerId ? '(你)' : ''}
                             </div>
-                            <div className="text-white/40 text-xs">
+                            <div className="text-white/40 text-[10px] md:text-xs">
                               总买入: ${p.totalBuyIn || initialChips}
                               {rebuyCount > 0 && <span className="text-orange-400 ml-1">补充{rebuyCount}次</span>}
                             </div>
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-yellow-300 font-bold">${p.chips}</div>
-                          <div className={`text-xs font-bold ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          <div className="text-yellow-300 font-bold text-xs md:text-sm">${p.chips}</div>
+                          <div className={`text-[10px] md:text-xs font-bold ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                             {profit >= 0 ? '+' : ''}{profit}
                           </div>
                         </div>

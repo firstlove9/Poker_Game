@@ -7,6 +7,7 @@ import {
   PlayerRole,
   HandRank,
   HandEvaluation,
+  RunItTwiceChoice,
 } from '../types/poker';
 import {
   GameState,
@@ -16,6 +17,8 @@ import {
   WinnerInfo,
   PlayerHandInfo,
   PotResult,
+  RunItTwiceDiceResult,
+  RunItTwiceRoundResult,
 } from '../types/room';
 import { Deck } from '../poker/Deck';
 import { HandEvaluator } from '../poker/HandEvaluator';
@@ -42,6 +45,19 @@ export class GameEngine {
     this.deck = new Deck();
 
     const playerIds = this.players.map(p => p.id);
+    const n = this.players.length;
+    const isHeadsUp = n === 2;
+
+    let smallBlindIndex: number;
+    let bigBlindIndex: number;
+
+    if (isHeadsUp) {
+      smallBlindIndex = dealerIndex % n;
+      bigBlindIndex = (dealerIndex + 1) % n;
+    } else {
+      smallBlindIndex = (dealerIndex + 1) % n;
+      bigBlindIndex = (dealerIndex + 2) % n;
+    }
 
     this.state = {
       handId: uuidv4(),
@@ -53,8 +69,8 @@ export class GameEngine {
       currentPlayerIndex: -1,
       currentPlayerId: '',
       dealerIndex,
-      smallBlindIndex: (dealerIndex + 1) % this.players.length,
-      bigBlindIndex: (dealerIndex + 2) % this.players.length,
+      smallBlindIndex,
+      bigBlindIndex,
       lastRaiseIndex: -1,
       currentBet: 0,
       minRaise: config.bigBlind,
@@ -64,6 +80,12 @@ export class GameEngine {
       playerRoles: {},
       actions: [],
       startTime: Date.now(),
+      isHeadsUpAllIn: false,
+      runItTwiceChoices: {},
+      runItTwiceDiceResult: null,
+      runItTwiceDiceReady: {},
+      runItTwiceBoard: [],
+      runItTwiceResults: [],
     };
   }
 
@@ -97,7 +119,12 @@ export class GameEngine {
     this.dealHoleCards();
     this.postBlinds();
 
-    this.state.currentPlayerIndex = this.getNextActivePlayerIndex(this.state.bigBlindIndex);
+    const isHeadsUp = this.players.length === 2;
+    if (isHeadsUp) {
+      this.state.currentPlayerIndex = this.state.smallBlindIndex;
+    } else {
+      this.state.currentPlayerIndex = this.getNextActivePlayerIndex(this.state.bigBlindIndex);
+    }
     this.state.currentPlayerId = this.players[this.state.currentPlayerIndex]?.id || '';
 
     return this.state;
@@ -271,12 +298,400 @@ export class GameEngine {
     if (this.checkOnlyOnePlayerLeft()) {
       this.endHand();
     } else if (this.isBettingRoundComplete()) {
-      this.advancePhase();
+      if (this.checkHeadsUpAllIn()) {
+        this.enterRunItTwiceChoice();
+      } else {
+        this.advancePhase();
+      }
     } else {
       this.advanceToNextPlayer();
     }
 
     return { success: true };
+  }
+
+  private checkHeadsUpAllIn(): boolean {
+    const activePlayers = this.players.filter(p =>
+      this.state.playerStatus[p.id] === PlayerStatus.PLAYING
+    );
+    const allInPlayers = this.players.filter(p =>
+      this.state.playerStatus[p.id] === PlayerStatus.ALL_IN
+    );
+
+    const nonFoldedPlayers = this.players.filter(p =>
+      this.state.playerStatus[p.id] !== PlayerStatus.FOLDED
+    );
+
+    if (nonFoldedPlayers.length !== 2) return false;
+    if (allInPlayers.length === 0) return false;
+    if (activePlayers.length > 1) return false;
+
+    return true;
+  }
+
+  private enterRunItTwiceChoice(): void {
+    this.collectBets();
+    this.state.totalPot = this.calcTotalPot();
+    this.state.isHeadsUpAllIn = true;
+    this.state.phase = GamePhase.RUN_IT_TWICE_CHOICE;
+    this.state.runItTwiceChoices = {};
+    this.state.runItTwiceDiceResult = null;
+    this.state.runItTwiceDiceReady = {};
+    this.state.runItTwiceBoard = [];
+    this.state.runItTwiceResults = [];
+    this.state.currentPlayerIndex = -1;
+    this.state.currentPlayerId = '';
+  }
+
+  submitRunItTwiceChoice(playerId: string, choice: RunItTwiceChoice): { success: boolean; error?: string; bothSubmitted?: boolean; finalChoice?: RunItTwiceChoice; needDice?: boolean } {
+    const nonFoldedPlayers = this.players.filter(p =>
+      this.state.playerStatus[p.id] !== PlayerStatus.FOLDED
+    );
+
+    if (nonFoldedPlayers.length !== 2) {
+      return { success: false, error: '当前不是2人对决' };
+    }
+
+    if (!nonFoldedPlayers.find(p => p.id === playerId)) {
+      return { success: false, error: '你不是参与对决的玩家' };
+    }
+
+    if (this.state.phase !== GamePhase.RUN_IT_TWICE_CHOICE) {
+      return { success: false, error: '当前不是选择阶段' };
+    }
+
+    if (this.state.runItTwiceChoices[playerId]) {
+      return { success: false, error: '你已经做出选择' };
+    }
+
+    this.state.runItTwiceChoices[playerId] = choice;
+
+    const p1 = nonFoldedPlayers[0];
+    const p2 = nonFoldedPlayers[1];
+    const c1 = this.state.runItTwiceChoices[p1.id];
+    const c2 = this.state.runItTwiceChoices[p2.id];
+
+    if (!c1 || !c2) {
+      return { success: true, bothSubmitted: false };
+    }
+
+    if (c1 === c2) {
+      return { success: true, bothSubmitted: true, finalChoice: c1, needDice: false };
+    }
+
+    this.state.phase = GamePhase.RUN_IT_TWICE_DICE;
+    this.state.runItTwiceDiceReady = {};
+    this.state.runItTwiceDiceResult = null;
+    return { success: true, bothSubmitted: true, needDice: true };
+  }
+
+  submitDiceRoll(playerId: string): { success: boolean; error?: string; bothReady?: boolean; diceResult?: RunItTwiceDiceResult } {
+    const nonFoldedPlayers = this.players.filter(p =>
+      this.state.playerStatus[p.id] !== PlayerStatus.FOLDED
+    );
+
+    if (nonFoldedPlayers.length !== 2) {
+      return { success: false, error: '当前不是2人对决' };
+    }
+
+    if (!nonFoldedPlayers.find(p => p.id === playerId)) {
+      return { success: false, error: '你不是参与对决的玩家' };
+    }
+
+    if (this.state.phase !== GamePhase.RUN_IT_TWICE_DICE) {
+      return { success: false, error: '当前不是掷骰子阶段' };
+    }
+
+    if (this.state.runItTwiceDiceReady[playerId]) {
+      return { success: false, error: '你已经掷过骰子了' };
+    }
+
+    this.state.runItTwiceDiceReady[playerId] = true;
+
+    const p1 = nonFoldedPlayers[0];
+    const p2 = nonFoldedPlayers[1];
+
+    if (!this.state.runItTwiceDiceReady[p1.id] || !this.state.runItTwiceDiceReady[p2.id]) {
+      return { success: true, bothReady: false };
+    }
+
+    const v1 = Math.floor(Math.random() * 6) + 1;
+    const v2 = Math.floor(Math.random() * 6) + 1;
+
+    const c1 = this.state.runItTwiceChoices[p1.id]!;
+    const c2 = this.state.runItTwiceChoices[p2.id]!;
+
+    let finalChoice: RunItTwiceChoice;
+    if (v1 === v2) {
+      finalChoice = 'once';
+    } else if (v1 > v2) {
+      finalChoice = c1;
+    } else {
+      finalChoice = c2;
+    }
+
+    const diceResult: RunItTwiceDiceResult = {
+      player1: { id: p1.id, value: v1 },
+      player2: { id: p2.id, value: v2 },
+      finalChoice,
+    };
+
+    this.state.runItTwiceDiceResult = diceResult;
+
+    if (v1 === v2) {
+      this.state.runItTwiceDiceReady = {};
+    }
+
+    return { success: true, bothReady: true, diceResult };
+  }
+
+  isDiceTied(): boolean {
+    if (!this.state.runItTwiceDiceResult) return false;
+    return this.state.runItTwiceDiceResult.player1.value === this.state.runItTwiceDiceResult.player2.value;
+  }
+
+  resetDiceForReroll(): void {
+    this.state.runItTwiceDiceReady = {};
+    this.state.runItTwiceDiceResult = null;
+  }
+
+  executeRunItTwice(): { winners: WinnerInfo[]; potResults: PotResult[]; allHands: PlayerHandInfo[] } {
+    const finalChoice = this.getFinalRunItTwiceChoice();
+
+    if (finalChoice === 'once') {
+      this.dealRemainingCommunityCards();
+      this.endHand();
+      return this.showdown();
+    }
+
+    return this.executeRunItTwiceLogic();
+  }
+
+  getFinalRunItTwiceChoice(): RunItTwiceChoice {
+    const nonFoldedPlayers = this.players.filter(p =>
+      this.state.playerStatus[p.id] !== PlayerStatus.FOLDED
+    );
+    const c1 = this.state.runItTwiceChoices[nonFoldedPlayers[0]?.id];
+    const c2 = this.state.runItTwiceChoices[nonFoldedPlayers[1]?.id];
+
+    if (c1 && c2 && c1 === c2) return c1;
+    if (this.state.runItTwiceDiceResult) return this.state.runItTwiceDiceResult.finalChoice;
+    return 'once';
+  }
+
+  private executeRunItTwiceLogic(): { winners: WinnerInfo[]; potResults: PotResult[]; allHands: PlayerHandInfo[] } {
+    const activePlayers = this.players.filter(p =>
+      this.state.playerStatus[p.id] !== PlayerStatus.FOLDED
+    );
+
+    const existingCommunityCards = [...this.state.communityCards];
+    const neededCards = 5 - existingCommunityCards.length;
+
+    const board1: Card[] = [...existingCommunityCards];
+    const board2: Card[] = [...existingCommunityCards];
+
+    if (neededCards > 0) {
+      this.deck.deal();
+      for (let i = 0; i < neededCards; i++) {
+        board1.push(this.deck.deal());
+      }
+
+      this.deck.deal();
+      for (let i = 0; i < neededCards; i++) {
+        board2.push(this.deck.deal());
+      }
+    }
+
+    this.state.runItTwiceBoard = [board1, board2];
+
+    const totalPot = this.state.pots.reduce((sum, p) => sum + p.amount, 0);
+    const halfPot = Math.floor(totalPot / 2);
+    const remainder = totalPot - halfPot * 2;
+
+    const roundResults: RunItTwiceRoundResult[] = [];
+    const roundWinnings: Map<string, number> = new Map();
+
+    for (const player of activePlayers) {
+      roundWinnings.set(player.id, 0);
+    }
+
+    const rankNames: Record<number, string> = {
+      [HandRank.HIGH_CARD]: '高牌',
+      [HandRank.ONE_PAIR]: '一对',
+      [HandRank.TWO_PAIR]: '两对',
+      [HandRank.THREE_OF_A_KIND]: '三条',
+      [HandRank.STRAIGHT]: '顺子',
+      [HandRank.FLUSH]: '同花',
+      [HandRank.FULL_HOUSE]: '葫芦',
+      [HandRank.FOUR_OF_A_KIND]: '四条',
+      [HandRank.STRAIGHT_FLUSH]: '同花顺',
+      [HandRank.ROYAL_FLUSH]: '皇家同花顺',
+    };
+
+    for (let round = 0; round < 2; round++) {
+      const board = round === 0 ? board1 : board2;
+      const potForRound = round === 0 ? halfPot + remainder : halfPot;
+
+      const playerHands: Map<string, { hand: HandEvaluation; cards: Card[] }> = new Map();
+      for (const player of activePlayers) {
+        const holeCards = this.state.playerCards[player.id];
+        if (holeCards && board.length >= 3) {
+          const allCards = [...holeCards, ...board];
+          const hand = HandEvaluator.evaluate(allCards);
+          playerHands.set(player.id, { hand, cards: allCards });
+        }
+      }
+
+      let bestHand: HandEvaluation | null = null;
+      let winnerIds: string[] = [];
+
+      for (const player of activePlayers) {
+        const handData = playerHands.get(player.id);
+        if (!handData) continue;
+        const hand = handData.hand;
+
+        if (!bestHand || hand.rank > bestHand.rank ||
+          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+          bestHand = hand;
+          winnerIds = [player.id];
+        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+          winnerIds.push(player.id);
+        }
+      }
+
+      const splitAmount = Math.floor(potForRound / winnerIds.length);
+      const potRemainder = potForRound - splitAmount * winnerIds.length;
+
+      const handRanks: Record<string, string> = {};
+      for (const player of activePlayers) {
+        const handData = playerHands.get(player.id);
+        handRanks[player.id] = handData ? rankNames[handData.hand.rank] || '未知' : '未知';
+      }
+
+      roundResults.push({
+        communityCards: board,
+        winnerIds,
+        winAmount: splitAmount,
+        potAmount: potForRound,
+        handRanks,
+      });
+
+      for (let i = 0; i < winnerIds.length; i++) {
+        const wid = winnerIds[i];
+        const win = splitAmount + (i === 0 ? potRemainder : 0);
+        roundWinnings.set(wid, (roundWinnings.get(wid) || 0) + win);
+        const winner = this.players.find(p => p.id === wid);
+        if (winner) {
+          winner.chips += win;
+        }
+      }
+    }
+
+    this.state.runItTwiceResults = roundResults;
+    this.state.communityCards = board1;
+    this.state.phase = GamePhase.SHOWDOWN;
+
+    return this.buildRunItTwiceShowdownResult(activePlayers, roundResults, roundWinnings);
+  }
+
+  private buildRunItTwiceShowdownResult(
+    activePlayers: RoomPlayer[],
+    roundResults: RunItTwiceRoundResult[],
+    roundWinnings: Map<string, number>
+  ): { winners: WinnerInfo[]; potResults: PotResult[]; allHands: PlayerHandInfo[] } {
+    const winners: WinnerInfo[] = [];
+    const potResults: PotResult[] = [];
+    const allHands: PlayerHandInfo[] = [];
+
+    const rankNames: Record<number, string> = {
+      [HandRank.HIGH_CARD]: '高牌',
+      [HandRank.ONE_PAIR]: '一对',
+      [HandRank.TWO_PAIR]: '两对',
+      [HandRank.THREE_OF_A_KIND]: '三条',
+      [HandRank.STRAIGHT]: '顺子',
+      [HandRank.FLUSH]: '同花',
+      [HandRank.FULL_HOUSE]: '葫芦',
+      [HandRank.FOUR_OF_A_KIND]: '四条',
+      [HandRank.STRAIGHT_FLUSH]: '同花顺',
+      [HandRank.ROYAL_FLUSH]: '皇家同花顺',
+    };
+
+    for (let round = 0; round < roundResults.length; round++) {
+      const result = roundResults[round];
+      const totalPot = this.state.pots.reduce((sum, p) => sum + p.amount, 0);
+      const halfPot = Math.floor(totalPot / 2);
+      const remainder = totalPot - halfPot * 2;
+      const potForRound = round === 0 ? halfPot + remainder : halfPot;
+
+      for (const wid of result.winnerIds) {
+        const winner = this.players.find(p => p.id === wid);
+        if (winner) {
+          winners.push({
+            playerId: winner.id,
+            playerName: winner.name,
+            winAmount: result.winAmount,
+            potType: round === 0 ? 'main' : 'side',
+            handRank: result.handRanks[wid] || '未知',
+            handDescription: `第${round + 1}轮获胜`,
+            winningCards: this.state.playerCards[wid] || [],
+            holeCards: this.state.playerCards[wid] || [],
+            explanation: `${winner.name}第${round + 1}轮以${result.handRanks[wid] || '未知'}获胜`,
+          });
+        }
+      }
+
+      potResults.push({
+        potId: `run-it-twice-round-${round + 1}`,
+        amount: potForRound,
+        winners: result.winnerIds,
+        splitAmount: result.winAmount,
+        remainder: 0,
+      });
+    }
+
+    for (const player of activePlayers) {
+      const initialChips = this.playerInitialChips.get(player.id) || 0;
+      const totalWin = roundWinnings.get(player.id) || 0;
+      const netWin = player.chips - initialChips;
+      const isWinner = netWin > 0;
+
+      const roundHandRanks: string[] = [];
+      for (let r = 0; r < roundResults.length; r++) {
+        roundHandRanks.push(roundResults[r]?.handRanks[player.id] || '未知');
+      }
+
+      allHands.push({
+        playerId: player.id,
+        playerName: player.name,
+        holeCards: this.state.playerCards[player.id] || [],
+        handRank: roundHandRanks.join(' / '),
+        handDescription: isWinner ? `跑两轮获胜 +${totalWin}` : `跑两轮失利`,
+        isWinner,
+        winAmount: isWinner ? netWin : undefined,
+        potType: isWinner ? 'both' : undefined,
+        netWin,
+        roundHandRanks,
+      });
+    }
+
+    const foldedPlayers = this.players.filter(p =>
+      this.state.playerStatus[p.id] === PlayerStatus.FOLDED
+    );
+    for (const fp of foldedPlayers) {
+      const initialChips = this.playerInitialChips.get(fp.id) || 0;
+      allHands.push({
+        playerId: fp.id,
+        playerName: fp.name,
+        holeCards: this.state.playerCards[fp.id] || [],
+        handRank: '弃牌',
+        handDescription: '弃牌',
+        isWinner: false,
+        netWin: fp.chips - initialChips,
+      });
+    }
+
+    this.state.phase = GamePhase.ENDED;
+    return { winners, potResults, allHands };
   }
 
   private checkOnlyOnePlayerLeft(): boolean {
@@ -370,6 +785,10 @@ export class GameEngine {
     }
 
     if (playingPlayers.length <= 1) {
+      if (this.checkHeadsUpAllIn()) {
+        this.enterRunItTwiceChoice();
+        return;
+      }
       this.dealRemainingCommunityCards();
       this.endHand();
       return;
@@ -377,6 +796,10 @@ export class GameEngine {
 
     const nextIndex = this.getNextActivePlayerIndex(this.state.dealerIndex);
     if (nextIndex === -1) {
+      if (this.checkHeadsUpAllIn()) {
+        this.enterRunItTwiceChoice();
+        return;
+      }
       this.dealRemainingCommunityCards();
       this.endHand();
       return;

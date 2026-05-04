@@ -1,4 +1,4 @@
-import { GamePhase, PlayerStatus, PlayerRole, Card } from './poker';
+import { GamePhase, PlayerStatus, PlayerRole, Card, RunItTwiceChoice } from './poker';
 
 export interface CreateRoomRequest {
   roomName?: string;
@@ -55,6 +55,7 @@ export interface RoomPlayer {
   isOnline: boolean;
   isNpc?: boolean;
   joinedAt: number;
+  hasPlayedHand?: boolean;
 }
 
 export interface Room {
@@ -69,6 +70,21 @@ export interface Room {
     votes: Map<string, boolean>;
     approved: boolean;
   };
+  voteLeaveCooldowns?: Map<string, number>;
+}
+
+export interface RunItTwiceDiceResult {
+  player1: { id: string; value: number };
+  player2: { id: string; value: number };
+  finalChoice: RunItTwiceChoice;
+}
+
+export interface RunItTwiceRoundResult {
+  communityCards: Card[];
+  winnerIds: string[];
+  winAmount: number;
+  potAmount: number;
+  handRanks: Record<string, string>;
 }
 
 export interface GameState {
@@ -92,6 +108,12 @@ export interface GameState {
   playerRoles: Record<string, PlayerRole>;
   actions: PlayerActionRecord[];
   startTime: number;
+  isHeadsUpAllIn: boolean;
+  runItTwiceChoices: Record<string, RunItTwiceChoice>;
+  runItTwiceDiceResult: RunItTwiceDiceResult | null;
+  runItTwiceDiceReady: Record<string, boolean>;
+  runItTwiceBoard: Card[][];
+  runItTwiceResults: RunItTwiceRoundResult[];
 }
 
 export interface Pot {
@@ -131,6 +153,7 @@ export interface PlayerHandInfo {
   winAmount?: number;
   potType?: 'main' | 'side' | 'both';
   netWin?: number;
+  roundHandRanks?: string[];
 }
 
 export interface PotResult {
