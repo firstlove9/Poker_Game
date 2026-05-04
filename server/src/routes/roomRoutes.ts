@@ -70,6 +70,8 @@ export function createRoomRoutes(roomManager: RoomManager): Router {
           roundBets: room.gameState.roundBets,
           playerStatus: room.gameState.playerStatus,
           playerRoles: room.gameState.playerRoles,
+          playerCards: room.gameState.playerCards,
+          lastShowdownResult: room.gameState.lastShowdownResult,
         } : undefined,
       }
     });

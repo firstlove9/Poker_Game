@@ -86,6 +86,7 @@ export class GameEngine {
       runItTwiceDiceReady: {},
       runItTwiceBoard: [],
       runItTwiceResults: [],
+      lastShowdownResult: null,
     };
   }
 

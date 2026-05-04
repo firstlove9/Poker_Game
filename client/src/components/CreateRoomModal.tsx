@@ -96,11 +96,11 @@ export default function CreateRoomModal({ onClose, onCreate }: CreateRoomModalPr
                 className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg 
                            text-white focus:outline-none focus:border-gold"
               >
-                <option value={5}>5</option>
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
+                <option value={5} className="bg-gray-800 text-white">5</option>
+                <option value={10} className="bg-gray-800 text-white">10</option>
+                <option value={25} className="bg-gray-800 text-white">25</option>
+                <option value={50} className="bg-gray-800 text-white">50</option>
+                <option value={100} className="bg-gray-800 text-white">100</option>
               </select>
             </div>
             <div>

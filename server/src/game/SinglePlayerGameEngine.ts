@@ -79,6 +79,7 @@ export class SinglePlayerGameEngine {
       runItTwiceDiceReady: {},
       runItTwiceBoard: [],
       runItTwiceResults: [],
+      lastShowdownResult: null,
     };
   }
 

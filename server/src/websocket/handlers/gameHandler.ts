@@ -98,6 +98,13 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
     runItTwiceDiceReady: {},
     runItTwiceBoard: [],
     runItTwiceResults: [],
+    lastShowdownResult: {
+      winners: mergedWinners,
+      allHands,
+      communityCards: finalGameState.communityCards,
+      runItTwiceBoard: finalGameState.runItTwiceBoard || [],
+      runItTwiceResults: finalGameState.runItTwiceResults || [],
+    },
   };
 
   io.to(roomId).emit(ServerEvents.ROOM_UPDATED, {

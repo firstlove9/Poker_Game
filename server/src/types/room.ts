@@ -114,6 +114,13 @@ export interface GameState {
   runItTwiceDiceReady: Record<string, boolean>;
   runItTwiceBoard: Card[][];
   runItTwiceResults: RunItTwiceRoundResult[];
+  lastShowdownResult: {
+    winners: WinnerInfo[];
+    allHands: PlayerHandInfo[];
+    communityCards: Card[];
+    runItTwiceBoard: Card[][];
+    runItTwiceResults: RunItTwiceRoundResult[];
+  } | null;
 }
 
 export interface Pot {

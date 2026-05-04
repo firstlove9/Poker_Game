@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Card, PlayerHandInfo } from '../types'
-import ActionLog, { ActionLogEntry } from '../components/ActionLog'
+import ActionLog, { ActionLogEntry, HandResultEntry } from '../components/ActionLog'
 
 interface PlayerInfo {
   id: string
@@ -48,7 +48,8 @@ export default function SinglePlayerPage() {
   const [showScoreboard, setShowScoreboard] = useState(false)
   const [initialChips] = useState(1000)
   const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>([])
-  const [showActionLog, setShowActionLog] = useState(true)
+  const [handResults, setHandResults] = useState<HandResultEntry[]>([])
+  const [showActionLog, setShowActionLog] = useState(() => window.innerWidth >= 768)
   const [allHands, setAllHands] = useState<PlayerHandInfo[]>([])
   const pollRef = useRef<NodeJS.Timeout | null>(null)
   const playerIdRef = useRef<string>('')
@@ -74,10 +75,6 @@ export default function SinglePlayerPage() {
         timestamp: now,
       }]
     })
-  }, [])
-
-  const clearLogs = useCallback(() => {
-    setActionLogs([])
   }, [])
 
   const updateFromResponse = useCallback((data: any) => {
@@ -131,6 +128,27 @@ export default function SinglePlayerPage() {
     }
     if (data.allHands && data.allHands.length > 0) {
       setAllHands(data.allHands)
+      const communityCards = data.communityCards && data.communityCards.length > 0
+        ? data.communityCards.map((c: Card) => `${c.rank}${c.suit}`).join(' ')
+        : ''
+      const players = data.allHands.map((h: PlayerHandInfo) => {
+        const cardsStr = h.holeCards && h.holeCards.length > 0
+          ? h.holeCards.map((c: Card) => `${c.rank}${c.suit}`).join(' ')
+          : ''
+        return {
+          playerName: h.playerName,
+          isWinner: h.isWinner,
+          winAmount: h.isWinner ? h.winAmount : undefined,
+          holeCards: cardsStr,
+          handRank: h.handRank || '',
+        }
+      })
+      setHandResults(prev => [...prev, {
+        id: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        players,
+        communityCards,
+        timestamp: Date.now(),
+      }])
     }
   }, [addLog])
 
@@ -258,7 +276,7 @@ export default function SinglePlayerPage() {
     setShowResult(false)
     setWinners([])
     setAllHands([])
-    clearLogs()
+    setActionLogs([])
 
     try {
       const res = await fetch('/api/single-player/next', {
@@ -397,7 +415,7 @@ export default function SinglePlayerPage() {
         <div className="flex-1 flex overflow-hidden">
           {showActionLog && (
             <div className="w-56 flex-shrink-0">
-              <ActionLog logs={actionLogs} onClear={clearLogs} />
+              <ActionLog logs={actionLogs} handResults={handResults} />
             </div>
           )}
           <div className="flex-1 relative">

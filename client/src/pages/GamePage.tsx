@@ -5,7 +5,7 @@ import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
 import { ClientEvents, ServerEvents, Card, PlayerHandInfo, RunItTwiceChoice, RunItTwiceDiceResult, RunItTwiceRoundResult } from '../types'
 import ChatBox from '../components/ChatBox'
-import ActionLog, { ActionLogEntry } from '../components/ActionLog'
+import ActionLog, { ActionLogEntry, HandResultEntry } from '../components/ActionLog'
 
 export default function GamePage() {
   const { roomId } = useParams<{ roomId: string }>()
@@ -33,8 +33,19 @@ export default function GamePage() {
   const [showRaiseSlider, setShowRaiseSlider] = useState(false)
   const [showScoreboard, setShowScoreboard] = useState(false)
   const [message, setMessage] = useState('')
-  const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>([])
-  const [showActionLog, setShowActionLog] = useState(true)
+  const [actionLogs, setActionLogs] = useState<ActionLogEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem(`poker_logs_${roomId}`)
+      return saved ? JSON.parse(saved) : []
+    } catch { return [] }
+  })
+  const [handResults, setHandResults] = useState<HandResultEntry[]>(() => {
+    try {
+      const saved = localStorage.getItem(`poker_results_${roomId}`)
+      return saved ? JSON.parse(saved) : []
+    } catch { return [] }
+  })
+  const [showActionLog, setShowActionLog] = useState(() => window.innerWidth >= 768)
   const [allHands, setAllHands] = useState<PlayerHandInfo[]>([])
   const [resultCommunityCards, setResultCommunityCards] = useState<Card[]>([])
   const [isReady, setIsReady] = useState(false)
@@ -74,9 +85,20 @@ export default function GamePage() {
     }])
   }, [])
 
-  const clearLogs = useCallback(() => {
-    setActionLogs([])
-  }, [])
+  const clearLogStorage = useCallback(() => {
+    try {
+      localStorage.removeItem(`poker_logs_${roomId}`)
+      localStorage.removeItem(`poker_results_${roomId}`)
+    } catch {}
+  }, [roomId])
+
+  useEffect(() => {
+    try { localStorage.setItem(`poker_logs_${roomId}`, JSON.stringify(actionLogs)) } catch {}
+  }, [actionLogs, roomId])
+
+  useEffect(() => {
+    try { localStorage.setItem(`poker_results_${roomId}`, JSON.stringify(handResults)) } catch {}
+  }, [handResults, roomId])
 
   useEffect(() => {
     if (voteCooldownUntil <= 0) {
@@ -120,7 +142,7 @@ export default function GamePage() {
       const meInRoom = data.room?.players?.find((p: any) => p.id === myPlayerId)
       setIsReady(meInRoom?.isReady || false)
       setIsWaitingForStart(false)
-      clearLogs()
+      setActionLogs([])
       addLog('系统', 'deal', undefined, data.gameState?.phase || 'pre-flop')
     }
 
@@ -201,6 +223,7 @@ export default function GamePage() {
 
     const handleRoomClosed = (data: any) => {
       addToast(data.reason || '房间已关闭', 'error')
+      clearLogStorage()
       reset()
       navigate('/lobby')
     }
@@ -223,6 +246,7 @@ export default function GamePage() {
       setVoteInfo(null)
       if (data.approved) {
         addToast('所有玩家同意离开，房间已解散', 'info')
+        clearLogStorage()
         reset()
         navigate('/lobby')
       } else {
@@ -235,6 +259,7 @@ export default function GamePage() {
 
     const handleRoomLeft = (data: any) => {
       if (data.reason === 'vote') {
+        clearLogStorage()
         reset()
         navigate('/lobby')
       }
@@ -253,7 +278,6 @@ export default function GamePage() {
       setDiceIsTied(false)
       setRunItTwiceBoard([])
       setRunItTwiceResults([])
-      addLog('系统', 'run-it-twice-ask', undefined, 'run-it-twice-choice')
     }
 
     const handleRunItTwiceChoiceResult = (data: any) => {
@@ -266,7 +290,6 @@ export default function GamePage() {
         setRunItTwiceOtherChoice(data.choice)
         setRunItTwiceOtherName(data.playerName || '对手')
       }
-      addLog(data.playerName || '玩家', `选择${data.choice === 'once' ? '跑一轮' : '跑两轮'}`, undefined, 'run-it-twice-choice')
     }
 
     const handleRunItTwiceDiceResult = (data: any) => {
@@ -300,7 +323,6 @@ export default function GamePage() {
       if (data.bothReady && data.diceResult) {
         setDiceResult(data.diceResult)
         setDiceIsTied(data.isTied || false)
-        addLog('系统', `骰子: ${data.diceResult.player1.value} vs ${data.diceResult.player2.value}${data.isTied ? ' (平局!)' : ` → ${data.finalChoice === 'once' ? '跑一轮' : '跑两轮'}`}`, undefined, 'run-it-twice-dice')
       }
     }
 
@@ -308,7 +330,6 @@ export default function GamePage() {
       if (data.gameState) {
         setGameState(data.gameState)
       }
-      addLog('系统', `执行${data.finalChoice === 'once' ? '跑一轮' : '跑两轮'}`, undefined, 'run-it-twice-executing')
     }
 
     const handleShowdownWithRunItTwice = (data: any) => {
@@ -341,6 +362,29 @@ export default function GamePage() {
       addLog('系统', 'showdown', undefined, 'showdown')
       for (const w of data.winners) {
         addLog(w.playerName, 'win', w.winAmount, 'showdown')
+      }
+      if (data.allHands && data.allHands.length > 0) {
+        const communityStr = data.communityCards && data.communityCards.length > 0
+          ? data.communityCards.map((c: Card) => `${c.rank}${c.suit}`).join(' ')
+          : ''
+        const players = data.allHands.map((h: PlayerHandInfo) => {
+          const cardsStr = h.holeCards && h.holeCards.length > 0
+            ? h.holeCards.map((c: Card) => `${c.rank}${c.suit}`).join(' ')
+            : ''
+          return {
+            playerName: h.playerName,
+            isWinner: h.isWinner,
+            winAmount: h.isWinner ? h.winAmount : undefined,
+            holeCards: cardsStr,
+            handRank: h.handRank || '',
+          }
+        })
+        setHandResults(prev => [...prev, {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          players,
+          communityCards: communityStr,
+          timestamp: Date.now(),
+        }])
       }
     }
 
@@ -394,6 +438,7 @@ export default function GamePage() {
       const response = await fetch(`/api/rooms/${roomId}`)
       if (!response.ok) {
         addToast('房间不存在或已关闭', 'error')
+        clearLogStorage()
         reset()
         navigate('/lobby')
         return
@@ -408,6 +453,7 @@ export default function GamePage() {
             setIsReady(player.isReady || false)
           } else {
             addToast('你已不在房间中', 'error')
+            clearLogStorage()
             reset()
             navigate('/lobby')
             return
@@ -417,18 +463,39 @@ export default function GamePage() {
             if (data.room.gameState.currentPlayerId) {
               setIsMyTurn(data.room.gameState.currentPlayerId === myPlayerId)
             }
+            if (data.room.gameState.playerCards && myPlayerId) {
+              const myCards = data.room.gameState.playerCards[myPlayerId]
+              if (myCards) {
+                setMyCards(myCards)
+              }
+            }
+            const lastResult = data.room.gameState.lastShowdownResult
+            if (lastResult && lastResult.winners && lastResult.allHands) {
+              setWinners(lastResult.winners)
+              setAllHands(lastResult.allHands)
+              setResultCommunityCards(lastResult.communityCards || [])
+              if (lastResult.runItTwiceBoard && lastResult.runItTwiceBoard.length > 0) {
+                setRunItTwiceBoard(lastResult.runItTwiceBoard)
+              }
+              if (lastResult.runItTwiceResults && lastResult.runItTwiceResults.length > 0) {
+                setRunItTwiceResults(lastResult.runItTwiceResults)
+              }
+              setShowResult(true)
+            }
           } else {
             setIsWaitingForStart(true)
           }
         }
       } else {
         addToast('房间不存在或已关闭', 'error')
+        clearLogStorage()
         reset()
         navigate('/lobby')
       }
     } catch (error) {
       console.error('Failed to fetch game state:', error)
       addToast('无法连接服务器', 'error')
+      clearLogStorage()
       reset()
       navigate('/lobby')
     }
@@ -441,6 +508,7 @@ export default function GamePage() {
       try {
         const result = await emit(ClientEvents.VOTE_LEAVE)
         if (result?.directLeave) {
+          clearLogStorage()
           reset()
           navigate('/lobby')
         }
@@ -450,6 +518,7 @@ export default function GamePage() {
     } else {
       try {
         await emit(ClientEvents.LEAVE_ROOM)
+        clearLogStorage()
         reset()
         navigate('/lobby')
       } catch (error: any) {
@@ -772,13 +841,13 @@ export default function GamePage() {
         <div className="flex-1 flex overflow-hidden relative">
           {showActionLog && (
             <div className="hidden md:block w-56 flex-shrink-0">
-              <ActionLog logs={actionLogs} onClear={clearLogs} />
+              <ActionLog logs={actionLogs} handResults={handResults} />
             </div>
           )}
           {showActionLog && (
             <div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setShowActionLog(false)}>
               <div className="absolute left-0 top-0 bottom-0 w-72" onClick={e => e.stopPropagation()}>
-                <ActionLog logs={actionLogs} onClear={clearLogs} />
+                <ActionLog logs={actionLogs} handResults={handResults} />
               </div>
             </div>
           )}
