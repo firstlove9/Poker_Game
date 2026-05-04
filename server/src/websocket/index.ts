@@ -1,8 +1,9 @@
 import { Server, Socket } from 'socket.io';
 import { RoomManager } from '../room/RoomManager';
-import { handleRoomEvents } from './handlers/roomHandler';
+import { handleRoomEvents, tryStartGame } from './handlers/roomHandler';
 import { handleGameEvents } from './handlers/gameHandler';
 import { ServerEvents } from '../types/events';
+import { RoomStatus } from '../types/room';
 import { gameEngines } from './handlers/gameHandler';
 
 function sanitizeRoom(room: any): any {
@@ -74,6 +75,7 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
           const player = room.players.find(p => p.id === playerId);
           if (player) {
             player.isOnline = true;
+            player.disconnectedAt = undefined;
           }
 
           socket.emit(ServerEvents.ROOM_JOINED, {
@@ -145,11 +147,25 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
           const player = room.players.find(p => p.id === playerId);
           if (player) {
             player.isOnline = false;
+            player.disconnectedAt = Date.now();
             io.to(roomId).emit(ServerEvents.PLAYER_LEFT, {
               playerId,
               room: sanitizeRoom(room),
               isTemporary: true,
             });
+
+            const hasPlayedBefore = room.players.some(p => p.hasPlayedHand);
+            if (hasPlayedBefore && room.status !== RoomStatus.PLAYING) {
+              const disconnectedPlayerId = playerId;
+              setTimeout(() => {
+                const currentRoom = roomManager.getRoom(roomId);
+                if (!currentRoom || currentRoom.status === RoomStatus.PLAYING) return;
+                const dp = currentRoom.players.find(p => p.id === disconnectedPlayerId);
+                if (dp && !dp.isOnline && dp.disconnectedAt) {
+                  tryStartGame(roomId, roomManager, io);
+                }
+              }, 31000);
+            }
           }
         }
       }

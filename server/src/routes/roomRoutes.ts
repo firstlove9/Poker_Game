@@ -17,6 +17,9 @@ export function createRoomRoutes(roomManager: RoomManager): Router {
         buyInMin: room.config.buyInMin,
         buyInMax: room.config.buyInMax,
         isPrivate: room.config.isPrivate,
+        gameVariant: room.config.gameVariant,
+        gameModifier: room.config.gameModifier,
+        mixedRotation: room.config.mixedRotation,
       },
       status: room.status,
       players: room.players.map(p => ({

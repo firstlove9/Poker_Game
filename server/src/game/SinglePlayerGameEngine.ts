@@ -7,6 +7,10 @@ import {
   PlayerRole,
   HandRank,
   HandEvaluation,
+  GameVariant,
+  GameModifier,
+  VariantRuleInfo,
+  VARIANT_RULES,
 } from '../types/poker';
 import {
   GameState,
@@ -21,6 +25,8 @@ export interface GameConfig {
   smallBlind: number;
   bigBlind: number;
   actionTimeout: number;
+  variant: GameVariant;
+  modifier?: GameModifier;
 }
 
 export interface SinglePlayerConfig {
@@ -35,6 +41,7 @@ export class SinglePlayerGameEngine {
   private deck: Deck;
   private players: RoomPlayer[];
   private config: GameConfig;
+  private variantRules: VariantRuleInfo;
   private humanPlayerId: string;
   private npcTimeouts: NodeJS.Timeout[] = [];
   private isRunning: boolean = false;
@@ -46,7 +53,8 @@ export class SinglePlayerGameEngine {
   constructor(config: SinglePlayerConfig, gameConfig: GameConfig) {
     this.humanPlayerId = config.humanPlayerId;
     this.config = gameConfig;
-    this.deck = new Deck();
+    this.variantRules = VARIANT_RULES[gameConfig.variant || GameVariant.TEXAS_NLHE];
+    this.deck = new Deck(this.variantRules.deckRanks);
     
     this.players = this.createPlayers(config);
     
@@ -57,6 +65,7 @@ export class SinglePlayerGameEngine {
       phase: GamePhase.WAITING,
       deck: [],
       communityCards: [],
+      boardCards: [],
       pots: [],
       totalPot: 0,
       currentPlayerIndex: -1,
@@ -127,7 +136,7 @@ export class SinglePlayerGameEngine {
     return this.players.map(p => ({ ...p }));
   }
 
-  getPlayerCards(playerId: string): [Card, Card] | undefined {
+  getPlayerCards(playerId: string): Card[] | undefined {
     return this.state.playerCards[playerId];
   }
 
@@ -147,7 +156,7 @@ export class SinglePlayerGameEngine {
 
   start(): void {
     this.isRunning = true;
-    this.deck = new Deck();
+    this.deck = new Deck(this.variantRules.deckRanks);
     this.deck.shuffle();
     this.state.communityCards = [];
     this.state.pots = [];
@@ -190,10 +199,13 @@ export class SinglePlayerGameEngine {
   }
 
   private dealHoleCards(): void {
+    const count = this.variantRules.holeCardCount;
     for (const player of this.players) {
-      const card1 = this.deck.deal();
-      const card2 = this.deck.deal();
-      this.state.playerCards[player.id] = [card1, card2];
+      const cards: Card[] = [];
+      for (let i = 0; i < count; i++) {
+        cards.push(this.deck.deal());
+      }
+      this.state.playerCards[player.id] = cards;
     }
   }
 
@@ -601,9 +613,18 @@ export class SinglePlayerGameEngine {
       const communityCards = this.state.communityCards;
       
       if (holeCards && communityCards.length >= 3) {
-        const allCards = [...holeCards, ...communityCards];
-        const hand = HandEvaluator.evaluate(allCards);
-        playerHands.set(player.id, { hand, cards: allCards });
+        let hand: HandEvaluation;
+        const variant = this.config.variant || GameVariant.TEXAS_NLHE;
+        const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD];
+        if (omahaVariants.includes(variant)) {
+          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder);
+        } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
+          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder);
+        } else {
+          const allCards = [...holeCards, ...communityCards];
+          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+        }
+        playerHands.set(player.id, { hand, cards: [...holeCards, ...communityCards] });
       }
     }
     
@@ -723,9 +744,18 @@ export class SinglePlayerGameEngine {
       const communityCards = this.state.communityCards;
       
       if (holeCards && communityCards.length >= 3) {
-        const allCards = [...holeCards, ...communityCards];
-        const hand = HandEvaluator.evaluate(allCards);
-        playerHands.set(player.id, { hand, cards: allCards });
+        let hand: HandEvaluation;
+        const variant = this.config.variant || GameVariant.TEXAS_NLHE;
+        const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD];
+        if (omahaVariants.includes(variant)) {
+          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder);
+        } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
+          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder);
+        } else {
+          const allCards = [...holeCards, ...communityCards];
+          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+        }
+        playerHands.set(player.id, { hand, cards: [...holeCards, ...communityCards] });
       }
     }
     

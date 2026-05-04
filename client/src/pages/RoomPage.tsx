@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Play, Check, X, Coins } from 'lucide-react'
+import { ArrowLeft, Users, Play, Check, X, Coins, HelpCircle } from 'lucide-react'
 import { useSocketStore } from '../stores/socketStore'
 import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
-import { ClientEvents, ServerEvents } from '../types'
+import { ClientEvents, ServerEvents, GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO } from '../types'
 import PlayerSeat from '../components/PlayerSeat'
 
 interface VoteInfo {
@@ -25,6 +25,7 @@ export default function RoomPage() {
   const [isReady, setIsReady] = useState(false)
   const [voteInfo, setVoteInfo] = useState<VoteInfo | null>(null)
   const [showVoteModal, setShowVoteModal] = useState(false)
+  const [showRuleHelp, setShowRuleHelp] = useState(false)
 
   useEffect(() => {
     if (!roomId) return
@@ -287,6 +288,22 @@ export default function RoomPage() {
       <div className="max-w-6xl mx-auto mb-8">
         <div className="glass-panel p-4">
           <div className="flex flex-wrap justify-center gap-6 text-sm">
+            <div className="text-white/60 flex items-center gap-1">
+              <span className="text-lg">{VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].icon}</span>
+              <span className="text-gold font-bold">{VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].name}</span>
+              {currentRoom.config.gameModifier && currentRoom.config.gameModifier !== GameModifier.NONE && (
+                <span className="text-red-400 font-bold text-xs">
+                  + {MODIFIER_INFO[currentRoom.config.gameModifier].icon} {MODIFIER_INFO[currentRoom.config.gameModifier].name}
+                </span>
+              )}
+              <button
+                onClick={() => setShowRuleHelp(true)}
+                className="text-white/40 hover:text-gold ml-1"
+                title="查看规则"
+              >
+                <HelpCircle className="w-4 h-4" />
+              </button>
+            </div>
             <div className="text-white/60">
               小盲注: <span className="text-gold font-bold">{currentRoom.config.smallBlind}</span>
             </div>
@@ -380,6 +397,59 @@ export default function RoomPage() {
           </div>
         </div>
       </div>
+
+      {/* 规则帮助弹窗 */}
+      {showRuleHelp && (() => {
+        const variant = currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE
+        const rule = VARIANT_RULES[variant]
+        return (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="glass-panel w-full max-w-md p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                  <span className="text-2xl">{rule.icon}</span>
+                  {rule.name}
+                </h3>
+                <button onClick={() => setShowRuleHelp(false)} className="text-white/60 hover:text-white">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <p className="text-white/80 text-sm leading-relaxed mb-4">
+                {rule.fullDesc}
+              </p>
+              {rule.specialRules.length > 0 && (
+                <div>
+                  <h4 className="text-white/90 font-semibold text-sm mb-2">特殊规则</h4>
+                  <ul className="space-y-1">
+                    {rule.specialRules.map((r, i) => (
+                      <li key={i} className="text-white/70 text-sm flex items-start gap-2">
+                        <span className="text-gold mt-0.5">•</span>
+                        {r}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div className="mt-4 pt-4 border-t border-white/10">
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="text-white/50">底牌数量</div>
+                  <div className="text-white/90">{rule.holeCardCount} 张</div>
+                  <div className="text-white/50">公共牌</div>
+                  <div className="text-white/90">{rule.communityCardCount} 张</div>
+                  <div className="text-white/50">下注方式</div>
+                  <div className="text-white/90">{rule.isPotLimit ? '底池限注 (Pot-Limit)' : '无限注 (No-Limit)'}</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowRuleHelp(false)}
+                className="w-full mt-4 btn-poker-primary"
+              >
+                知道了
+              </button>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

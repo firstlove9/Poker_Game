@@ -1,19 +1,22 @@
 import { Card, HandRank, HandEvaluation, HandRankNames, RANKS } from '../types/poker';
 
 export class HandEvaluator {
-  // 牌面数值映射
   private static readonly RANK_VALUES: Record<string, number> = {
     '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8,
     '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14,
   };
 
-  // 评估7张牌找出最大的5张组合
-  static evaluate(cards: Card[]): HandEvaluation {
+  static evaluate(cards: Card[], handRankOrder?: HandRank[]): HandEvaluation {
     if (cards.length < 5) {
       throw new Error('Need at least 5 cards to evaluate');
     }
 
-    // 生成所有5张牌的组合
+    const rankOrder = handRankOrder || [
+      HandRank.ROYAL_FLUSH, HandRank.STRAIGHT_FLUSH, HandRank.FOUR_OF_A_KIND,
+      HandRank.FULL_HOUSE, HandRank.FLUSH, HandRank.STRAIGHT,
+      HandRank.THREE_OF_A_KIND, HandRank.TWO_PAIR, HandRank.ONE_PAIR, HandRank.HIGH_CARD,
+    ];
+
     const combinations = this.getCombinations(cards, 5);
     
     let bestHand: Card[] = [];
@@ -21,7 +24,7 @@ export class HandEvaluator {
     let bestValue = 0;
 
     for (const combo of combinations) {
-      const { rank, value } = this.evaluateFiveCards(combo);
+      const { rank, value } = this.evaluateFiveCards(combo, rankOrder);
       if (rank > bestRank || (rank === bestRank && value > bestValue)) {
         bestRank = rank;
         bestValue = value;
@@ -29,7 +32,6 @@ export class HandEvaluator {
       }
     }
 
-    // 确定使用了哪些底牌和公共牌
     const holeCards = cards.slice(0, 2);
     const communityCards = cards.slice(2);
     const holeCardsUsed = bestHand.filter(card => 
@@ -50,108 +52,192 @@ export class HandEvaluator {
     };
   }
 
-  // 评估5张牌
-  private static evaluateFiveCards(cards: Card[]): { rank: HandRank; value: number } {
+  static evaluateOmaha(holeCards: Card[], communityCards: Card[], handRankOrder?: HandRank[]): HandEvaluation {
+    if (holeCards.length < 4 || communityCards.length < 3) {
+      throw new Error('Omaha needs at least 4 hole cards and 3 community cards');
+    }
+
+    const rankOrder = handRankOrder || [
+      HandRank.ROYAL_FLUSH, HandRank.STRAIGHT_FLUSH, HandRank.FOUR_OF_A_KIND,
+      HandRank.FULL_HOUSE, HandRank.FLUSH, HandRank.STRAIGHT,
+      HandRank.THREE_OF_A_KIND, HandRank.TWO_PAIR, HandRank.ONE_PAIR, HandRank.HIGH_CARD,
+    ];
+
+    const holeCombos = this.getCombinations(holeCards, 2);
+    const communityCombos = this.getCombinations(communityCards, 3);
+
+    let bestHand: Card[] = [];
+    let bestRank = HandRank.HIGH_CARD;
+    let bestValue = 0;
+    let bestHoleUsed: Card[] = [];
+    let bestCommunityUsed: Card[] = [];
+
+    for (const hc of holeCombos) {
+      for (const cc of communityCombos) {
+        const combo = [...hc, ...cc];
+        const { rank, value } = this.evaluateFiveCards(combo, rankOrder);
+        if (rank > bestRank || (rank === bestRank && value > bestValue)) {
+          bestRank = rank;
+          bestValue = value;
+          bestHand = combo;
+          bestHoleUsed = hc;
+          bestCommunityUsed = cc;
+        }
+      }
+    }
+
+    return {
+      rank: bestRank,
+      rankName: HandRankNames[bestRank],
+      cards: bestHand,
+      holeCardsUsed: bestHoleUsed,
+      communityCardsUsed: bestCommunityUsed,
+      description: this.getDescription(bestHand, bestRank),
+      value: bestValue,
+    };
+  }
+
+  static evaluateCrazyPineapple(holeCards: Card[], communityCards: Card[], handRankOrder?: HandRank[]): HandEvaluation {
+    if (holeCards.length < 3 || communityCards.length < 2) {
+      throw new Error('Crazy Pineapple needs at least 3 hole cards and 2 community cards');
+    }
+
+    const rankOrder = handRankOrder || [
+      HandRank.ROYAL_FLUSH, HandRank.STRAIGHT_FLUSH, HandRank.FOUR_OF_A_KIND,
+      HandRank.FULL_HOUSE, HandRank.FLUSH, HandRank.STRAIGHT,
+      HandRank.THREE_OF_A_KIND, HandRank.TWO_PAIR, HandRank.ONE_PAIR, HandRank.HIGH_CARD,
+    ];
+
+    const allCards = [...holeCards, ...communityCards];
+    const combinations = this.getCombinations(allCards, 5);
+
+    let bestHand: Card[] = [];
+    let bestRank = HandRank.HIGH_CARD;
+    let bestValue = 0;
+
+    for (const combo of combinations) {
+      const { rank, value } = this.evaluateFiveCards(combo, rankOrder);
+      if (rank > bestRank || (rank === bestRank && value > bestValue)) {
+        bestRank = rank;
+        bestValue = value;
+        bestHand = combo;
+      }
+    }
+
+    const holeCardsUsed = bestHand.filter(card =>
+      holeCards.some(hc => hc.code === card.code)
+    );
+    const communityCardsUsed = bestHand.filter(card =>
+      communityCards.some(cc => cc.code === card.code)
+    );
+
+    return {
+      rank: bestRank,
+      rankName: HandRankNames[bestRank],
+      cards: bestHand,
+      holeCardsUsed,
+      communityCardsUsed,
+      description: this.getDescription(bestHand, bestRank),
+      value: bestValue,
+    };
+  }
+
+  private static evaluateFiveCards(cards: Card[], rankOrder: HandRank[]): { rank: HandRank; value: number } {
     const isFlush = this.isFlush(cards);
     const isStraight = this.isStraight(cards);
     const isWheelStraight = this.isWheelStraight(cards);
     const counts = this.getCardCounts(cards);
     const sortedRanks = this.getSortedRanks(cards);
 
-    // 皇家同花顺/同花顺
     if (isFlush && (isStraight || isWheelStraight)) {
       if (isWheelStraight) {
         return {
-          rank: HandRank.STRAIGHT_FLUSH,
+          rank: this.mapRank(HandRank.STRAIGHT_FLUSH, rankOrder),
           value: this.calculateValue([5, 4, 3, 2, 1]),
         };
       }
       const isRoyal = sortedRanks[0] === 14 && sortedRanks[4] === 10;
+      const baseRank = isRoyal ? HandRank.ROYAL_FLUSH : HandRank.STRAIGHT_FLUSH;
       return {
-        rank: isRoyal ? HandRank.ROYAL_FLUSH : HandRank.STRAIGHT_FLUSH,
+        rank: this.mapRank(baseRank, rankOrder),
         value: this.calculateValue(sortedRanks),
       };
     }
 
-    // 四条
     if (counts.includes(4)) {
       return {
-        rank: HandRank.FOUR_OF_A_KIND,
+        rank: this.mapRank(HandRank.FOUR_OF_A_KIND, rankOrder),
         value: this.calculateValueWithCounts(sortedRanks, counts, 4),
       };
     }
 
-    // 葫芦
     if (counts.includes(3) && counts.includes(2)) {
       return {
-        rank: HandRank.FULL_HOUSE,
+        rank: this.mapRank(HandRank.FULL_HOUSE, rankOrder),
         value: this.calculateValueWithCounts(sortedRanks, counts, 3, 2),
       };
     }
 
-    // 同花
     if (isFlush) {
       return {
-        rank: HandRank.FLUSH,
+        rank: this.mapRank(HandRank.FLUSH, rankOrder),
         value: this.calculateValue(sortedRanks),
       };
     }
 
-    // 顺子
     if (isStraight || isWheelStraight) {
       if (isWheelStraight) {
         return {
-          rank: HandRank.STRAIGHT,
+          rank: this.mapRank(HandRank.STRAIGHT, rankOrder),
           value: this.calculateValue([5, 4, 3, 2, 1]),
         };
       }
       return {
-        rank: HandRank.STRAIGHT,
+        rank: this.mapRank(HandRank.STRAIGHT, rankOrder),
         value: this.calculateValue(sortedRanks),
       };
     }
 
-    // 三条
     if (counts.includes(3)) {
       return {
-        rank: HandRank.THREE_OF_A_KIND,
+        rank: this.mapRank(HandRank.THREE_OF_A_KIND, rankOrder),
         value: this.calculateValueWithCounts(sortedRanks, counts, 3),
       };
     }
 
-    // 两对
     if (counts.filter(c => c === 2).length === 2) {
       return {
-        rank: HandRank.TWO_PAIR,
+        rank: this.mapRank(HandRank.TWO_PAIR, rankOrder),
         value: this.calculateValueWithCounts(sortedRanks, counts, 2),
       };
     }
 
-    // 一对
     if (counts.includes(2)) {
       return {
-        rank: HandRank.ONE_PAIR,
+        rank: this.mapRank(HandRank.ONE_PAIR, rankOrder),
         value: this.calculateValueWithCounts(sortedRanks, counts, 2),
       };
     }
 
-    // 高牌
     return {
-      rank: HandRank.HIGH_CARD,
+      rank: this.mapRank(HandRank.HIGH_CARD, rankOrder),
       value: this.calculateValue(sortedRanks),
     };
   }
 
-  // 判断是否同花
+  private static mapRank(baseRank: HandRank, rankOrder: HandRank[]): HandRank {
+    const idx = rankOrder.indexOf(baseRank);
+    if (idx === -1) return baseRank;
+    return (rankOrder.length - idx) as HandRank;
+  }
+
   private static isFlush(cards: Card[]): boolean {
     const suits = new Set(cards.map(c => c.suit));
     return suits.size === 1;
   }
 
-  // 判断是否顺子（不含轮子顺A-5-4-3-2）
   private static isStraight(cards: Card[]): boolean {
     const ranks = this.getSortedRanks(cards);
-    
     for (let i = 0; i < ranks.length - 1; i++) {
       if (ranks[i] - ranks[i + 1] !== 1) {
         return false;
@@ -160,13 +246,11 @@ export class HandEvaluator {
     return true;
   }
 
-  // 判断是否轮子顺（A-5-4-3-2）
   private static isWheelStraight(cards: Card[]): boolean {
     const ranks = this.getSortedRanks(cards);
     return ranks[0] === 14 && ranks[1] === 5 && ranks[2] === 4 && ranks[3] === 3 && ranks[4] === 2;
   }
 
-  // 获取每张牌的数量统计
   private static getCardCounts(cards: Card[]): number[] {
     const rankCounts: Record<number, number> = {};
     for (const card of cards) {
@@ -176,38 +260,31 @@ export class HandEvaluator {
     return Object.values(rankCounts).sort((a, b) => b - a);
   }
 
-  // 获取排序后的牌面值（从大到小）
   private static getSortedRanks(cards: Card[]): number[] {
     return cards
       .map(c => this.RANK_VALUES[c.rank])
       .sort((a, b) => b - a);
   }
 
-  // 生成组合
   private static getCombinations<T>(array: T[], k: number): T[][] {
     if (k === 0) return [[]];
     if (array.length < k) return [];
-    
     const result: T[][] = [];
-    
     function backtrack(start: number, current: T[]) {
       if (current.length === k) {
         result.push([...current]);
         return;
       }
-      
       for (let i = start; i < array.length; i++) {
         current.push(array[i]);
         backtrack(i + 1, current);
         current.pop();
       }
     }
-    
     backtrack(0, []);
     return result;
   }
 
-  // 计算牌型数值（用于比较大小）
   private static calculateValue(ranks: number[]): number {
     let value = 0;
     for (let i = 0; i < ranks.length; i++) {
@@ -216,7 +293,6 @@ export class HandEvaluator {
     return value;
   }
 
-  // 根据牌数量计算数值
   private static calculateValueWithCounts(
     ranks: number[], 
     counts: number[], 
@@ -227,8 +303,6 @@ export class HandEvaluator {
     for (const rank of ranks) {
       rankCounts[rank] = (rankCounts[rank] || 0) + 1;
     }
-
-    // 按数量分组
     const groups: number[][] = [];
     for (let i = 4; i >= 1; i--) {
       const group = Object.entries(rankCounts)
@@ -239,8 +313,6 @@ export class HandEvaluator {
         groups.push(group);
       }
     }
-
-    // 计算数值
     let value = 0;
     for (const group of groups) {
       for (const rank of group) {
@@ -250,7 +322,6 @@ export class HandEvaluator {
     return value;
   }
 
-  // 获取牌型描述
   private static getDescription(cards: Card[], rank: HandRank): string {
     const ranks = this.getSortedRanks(cards);
     const rankNames = ranks.map(r => {
@@ -344,7 +415,6 @@ export class HandEvaluator {
     }
   }
 
-  // 比较两手牌
   static compareHands(hand1: HandEvaluation, hand2: HandEvaluation): number {
     if (hand1.rank !== hand2.rank) {
       return hand1.rank - hand2.rank;

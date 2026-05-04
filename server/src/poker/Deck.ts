@@ -2,16 +2,17 @@ import { Card, Suit, Rank, SUITS, RANKS } from '../types/poker';
 
 export class Deck {
   private cards: Card[] = [];
+  private customRanks: Rank[];
 
-  constructor() {
+  constructor(ranks?: Rank[]) {
+    this.customRanks = ranks || [...RANKS];
     this.reset();
   }
 
-  // 重置并洗牌
   reset(): void {
     this.cards = [];
     for (const suit of SUITS) {
-      for (const rank of RANKS) {
+      for (const rank of this.customRanks) {
         this.cards.push({
           suit,
           rank,
@@ -22,7 +23,6 @@ export class Deck {
     this.shuffle();
   }
 
-  // 洗牌 (Fisher-Yates算法)
   shuffle(): void {
     for (let i = this.cards.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -30,7 +30,6 @@ export class Deck {
     }
   }
 
-  // 发牌
   deal(): Card {
     const card = this.cards.pop();
     if (!card) {
@@ -39,7 +38,6 @@ export class Deck {
     return card;
   }
 
-  // 发多张牌
   dealMultiple(count: number): Card[] {
     const cards: Card[] = [];
     for (let i = 0; i < count; i++) {
@@ -48,12 +46,10 @@ export class Deck {
     return cards;
   }
 
-  // 查看剩余牌数
   remaining(): number {
     return this.cards.length;
   }
 
-  // 烧牌 (弃牌)
   burn(): void {
     this.deal();
   }

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { SinglePlayerGameEngine, SinglePlayerConfig, GameConfig } from '../game/SinglePlayerGameEngine';
-import { PlayerAction } from '../types/poker';
+import { PlayerAction, GameVariant, GameModifier } from '../types/poker';
 
 const router = Router();
 
@@ -10,6 +10,7 @@ const defaultGameConfig: GameConfig = {
   smallBlind: 10,
   bigBlind: 20,
   actionTimeout: 30,
+  variant: GameVariant.TEXAS_NLHE,
 };
 
 function buildGameState(game: SinglePlayerGameEngine, playerId: string) {
@@ -42,7 +43,7 @@ function buildGameState(game: SinglePlayerGameEngine, playerId: string) {
 
 router.post('/start', (req: Request, res: Response) => {
   try {
-    const { playerId, playerName, npcCount, buyIn } = req.body;
+    const { playerId, playerName, npcCount, buyIn, variant, modifier } = req.body;
 
     if (!playerId) {
       res.json({ success: false, error: '缺少玩家ID' });
@@ -62,7 +63,13 @@ router.post('/start', (req: Request, res: Response) => {
       buyIn: buyIn || 1000,
     };
 
-    const game = new SinglePlayerGameEngine(config, defaultGameConfig);
+    const gameConfig: GameConfig = {
+      ...defaultGameConfig,
+      variant: variant || GameVariant.TEXAS_NLHE,
+      modifier: modifier || GameModifier.NONE,
+    };
+
+    const game = new SinglePlayerGameEngine(config, gameConfig);
     game.start();
 
     games.set(playerId, game);

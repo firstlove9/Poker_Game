@@ -13,17 +13,32 @@ function safeCallback(callback: any, response: any): void {
   }
 }
 
-function tryStartGame(roomId: string, roomManager: RoomManager, io: Server): boolean {
+export function tryStartGame(roomId: string, roomManager: RoomManager, io: Server): boolean {
   const room = roomManager.getRoom(roomId);
   if (!room || room.status === RoomStatus.PLAYING) return false;
 
   const readyPlayers = room.players.filter(p => p.isReady && p.chips > 0);
   if (readyPlayers.length < room.config.minPlayers) return false;
 
+  const hasPlayedBefore = room.players.some(p => p.hasPlayedHand);
+  if (hasPlayedBefore) {
+    const DISCONNECT_TIMEOUT_MS = 30000;
+    const now = Date.now();
+    const playersNeedReady = room.players.filter(p => {
+      if (p.chips <= 0) return false;
+      if (!p.isOnline && p.disconnectedAt && (now - p.disconnectedAt) > DISCONNECT_TIMEOUT_MS) return false;
+      return true;
+    });
+    const allReady = playersNeedReady.every(p => p.isReady);
+    if (!allReady) return false;
+  }
+
   const gameConfig: GameConfig = {
     smallBlind: room.config.smallBlind,
     bigBlind: room.config.bigBlind,
     actionTimeout: room.config.actionTimeout,
+    variant: room.config.gameVariant,
+    modifier: room.config.gameModifier,
   };
 
   const dealerIndex = room.gameState ? (room.gameState.dealerIndex + 1) % readyPlayers.length : 0;
@@ -164,6 +179,7 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
           const existingPlayer = room.players.find(p => p.id === playerId);
           if (existingPlayer) {
             existingPlayer.isOnline = true;
+            existingPlayer.disconnectedAt = undefined;
             existingPlayer.name = data.playerName || existingPlayer.name;
             socket.join(data.roomId);
             socket.data.roomId = data.roomId;
@@ -303,16 +319,29 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
         return;
       }
 
+      const room = roomManager.getRoom(roomId);
+      if (room && room.config.hostId === playerId) {
+        const host = room.players.find(p => p.id === playerId);
+        if (host && !host.isReady && host.chips > 0) {
+          host.isReady = true;
+          io.to(roomId).emit(ServerEvents.PLAYER_READY_CHANGED, {
+            playerId,
+            ready: true,
+            room: sanitizeRoom(room),
+          });
+        }
+      }
+
       const started = tryStartGame(roomId, roomManager, io);
       if (started) {
         safeCallback(callback, { success: true });
       } else {
-        const room = roomManager.getRoom(roomId);
-        if (room && room.status === RoomStatus.PLAYING) {
+        const currentRoom = roomManager.getRoom(roomId);
+        if (currentRoom && currentRoom.status === RoomStatus.PLAYING) {
           safeCallback(callback, { success: false, error: '游戏正在进行中' });
         } else {
-          const readyPlayers = room?.players.filter(p => p.isReady && p.chips > 0) || [];
-          safeCallback(callback, { success: false, error: `至少需要${room?.config.minPlayers || 2}名有筹码的玩家才能开始（当前${readyPlayers.length}人准备且有筹码）` });
+          const readyPlayers = currentRoom?.players.filter(p => p.isReady && p.chips > 0) || [];
+          safeCallback(callback, { success: false, error: `至少需要${currentRoom?.config.minPlayers || 2}名有筹码的玩家才能开始（当前${readyPlayers.length}人准备且有筹码）` });
         }
       }
     } catch (error) {

@@ -157,6 +157,8 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
 
       const result = gameEngine.performAction(playerId, playerAction, data.amount);
 
+      console.log(`[gameHandler] performAction result: playerId=${playerId} action=${data.action} amount=${data.amount} success=${result.success} error=${result.error || 'none'}`);
+
       if (result.success) {
         const gameState = gameEngine.getState();
         room.gameState = gameState;
@@ -172,6 +174,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
         const isGameEnding = gameState.phase === GamePhase.SHOWDOWN || gameState.phase === GamePhase.ENDED;
         const isRunItTwiceChoice = gameState.phase === GamePhase.RUN_IT_TWICE_CHOICE;
 
+        console.log(`[gameHandler] ACTION_RESULT: action=${data.action} phase=${gameState.phase} currentPlayerId=${gameState.currentPlayerId} isGameEnding=${isGameEnding}`);
         io.to(roomId).emit(ServerEvents.ACTION_RESULT, {
           playerId,
           playerName: actor?.name || playerId,
@@ -215,6 +218,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
           finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io);
         } else {
           const currentPlayerId = gameEngine.getCurrentPlayerId();
+          console.log(`[gameHandler] PLAYER_TURN: currentPlayerId=${currentPlayerId}`);
           if (currentPlayerId) {
             const currentPlayer = room.players.find(p => p.id === currentPlayerId);
             if (currentPlayer) {

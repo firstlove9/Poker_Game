@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Plus, Play, Lock, Users, RefreshCw } from 'lucide-react'
 import { useSocketStore } from '../stores/socketStore'
+import { GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO } from '../types'
 import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
 import { ClientEvents, ServerEvents, Room } from '../types'
@@ -209,6 +210,15 @@ export default function LobbyPage() {
                   </div>
                   <div className="text-white/60">
                     盲注: {room.config.smallBlind || 0}/{room.config.bigBlind || 0}
+                  </div>
+                  <div className="text-white/60 flex items-center gap-1">
+                    <span>{VARIANT_RULES[room.config.gameVariant || GameVariant.TEXAS_NLHE].icon}</span>
+                    <span className="hidden sm:inline">{VARIANT_RULES[room.config.gameVariant || GameVariant.TEXAS_NLHE].name}</span>
+                    {room.config.gameModifier && room.config.gameModifier !== GameModifier.NONE && (
+                      <span className="text-red-400/70 text-xs">
+                        +{MODIFIER_INFO[room.config.gameModifier].icon}
+                      </span>
+                    )}
                   </div>
                 </div>
 

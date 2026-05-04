@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Room, RoomConfig, RoomStatus, RoomPlayer, CreateRoomRequest, JoinRoomRequest } from '../types/room';
 import { GameEngine, GameConfig } from '../game/GameEngine';
+import { GameVariant, GameModifier, VARIANT_RULES } from '../types/poker';
 
 const KEYBOARD_CHARS_REGEX = /^[a-zA-Z0-9\u4e00-\u9fff\s\~\!\@\#\$\%\^\&\*\(\)\-\_\=\+\[\]\{\}\|\\\;\:\'\"\,\.\/\<\>\?]+$/;
 
@@ -49,7 +50,10 @@ export class RoomManager {
       roomName: request.roomName || `房间 ${roomId}`,
       hostId,
       createdAt: Date.now(),
-      maxPlayers: Math.min(Math.max(request.maxPlayers || 9, 2), 12),
+      maxPlayers: (() => {
+        const variantMax = request.gameVariant ? (VARIANT_RULES[request.gameVariant]?.maxPlayers || 10) : 10;
+        return Math.min(Math.max(request.maxPlayers || 9, 2), variantMax);
+      })(),
       minPlayers: 2,
       smallBlind: request.smallBlind || 10,
       bigBlind: request.bigBlind || 20,
@@ -62,6 +66,9 @@ export class RoomManager {
       password: request.password,
       allowSpectate: true,
       allowChat: true,
+      gameVariant: request.gameVariant || GameVariant.TEXAS_NLHE,
+      gameModifier: request.gameModifier || GameModifier.NONE,
+      mixedRotation: request.mixedRotation,
     };
 
     const room: Room = {
@@ -241,6 +248,8 @@ export class RoomManager {
       smallBlind: room.config.smallBlind,
       bigBlind: room.config.bigBlind,
       actionTimeout: room.config.actionTimeout,
+      variant: room.config.gameVariant,
+      modifier: room.config.gameModifier,
     };
 
     const dealerIndex = 0; // 第一局从0号位开始

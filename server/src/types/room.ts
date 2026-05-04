@@ -1,4 +1,4 @@
-import { GamePhase, PlayerStatus, PlayerRole, Card, RunItTwiceChoice } from './poker';
+import { GamePhase, PlayerStatus, PlayerRole, Card, RunItTwiceChoice, GameVariant, GameModifier, MixedRotationConfig } from './poker';
 
 export interface CreateRoomRequest {
   roomName?: string;
@@ -10,6 +10,9 @@ export interface CreateRoomRequest {
   isPrivate?: boolean;
   password?: string;
   hostName?: string;
+  gameVariant?: GameVariant;
+  gameModifier?: GameModifier;
+  mixedRotation?: MixedRotationConfig;
 }
 
 export interface JoinRoomRequest {
@@ -36,6 +39,9 @@ export interface RoomConfig {
   password?: string;
   allowSpectate: boolean;
   allowChat: boolean;
+  gameVariant: GameVariant;
+  gameModifier: GameModifier;
+  mixedRotation?: MixedRotationConfig;
 }
 
 export enum RoomStatus {
@@ -56,6 +62,7 @@ export interface RoomPlayer {
   isNpc?: boolean;
   joinedAt: number;
   hasPlayedHand?: boolean;
+  disconnectedAt?: number;
 }
 
 export interface Room {
@@ -92,6 +99,7 @@ export interface GameState {
   phase: GamePhase;
   deck: Card[];
   communityCards: Card[];
+  boardCards: Card[][];
   pots: Pot[];
   totalPot: number;
   currentPlayerIndex: number;
@@ -103,7 +111,7 @@ export interface GameState {
   currentBet: number;
   minRaise: number;
   roundBets: Record<string, number>;
-  playerCards: Record<string, [Card, Card]>;
+  playerCards: Record<string, Card[]>;
   playerStatus: Record<string, PlayerStatus>;
   playerRoles: Record<string, PlayerRole>;
   actions: PlayerActionRecord[];

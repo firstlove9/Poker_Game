@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useSocketStore } from '../stores/socketStore'
 import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
-import { ClientEvents, ServerEvents, Card, PlayerHandInfo, RunItTwiceChoice, RunItTwiceDiceResult, RunItTwiceRoundResult } from '../types'
+import { ClientEvents, ServerEvents, Card, PlayerHandInfo, RunItTwiceChoice, RunItTwiceDiceResult, RunItTwiceRoundResult, GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO } from '../types'
 import ChatBox from '../components/ChatBox'
 import ActionLog, { ActionLogEntry, HandResultEntry } from '../components/ActionLog'
+import { HelpCircle, X } from 'lucide-react'
 
 export default function GamePage() {
   const { roomId } = useParams<{ roomId: string }>()
@@ -67,6 +68,7 @@ export default function GamePage() {
   const [runItTwiceOtherChoice, setRunItTwiceOtherChoice] = useState<RunItTwiceChoice | null>(null)
   const [runItTwiceOtherName, setRunItTwiceOtherName] = useState('')
   const [showDiceDialog, setShowDiceDialog] = useState(false)
+  const [showRuleHelp, setShowRuleHelp] = useState(false)
   const [diceReady, setDiceReady] = useState<Record<string, boolean>>({})
   const [diceResult, setDiceResult] = useState<RunItTwiceDiceResult | null>(null)
   const [diceIsTied, setDiceIsTied] = useState(false)
@@ -574,7 +576,11 @@ export default function GamePage() {
     setIsMyTurn(false)
     setShowRaiseSlider(false)
     try {
-      await emit(ClientEvents.PLAYER_ACTION, { action, amount })
+      let finalAmount = amount
+      if (action === 'raise' && amount !== undefined && variantRule.isPotLimit) {
+        finalAmount = Math.min(amount, potLimitMaxRaise)
+      }
+      await emit(ClientEvents.PLAYER_ACTION, { action, amount: finalAmount })
     } catch (error: any) {
       setMessage(error.message || '操作失败')
       setTimeout(() => setMessage(''), 3000)
@@ -671,7 +677,25 @@ export default function GamePage() {
       <div className="min-h-screen bg-gradient-to-br from-green-900 to-green-950 select-none overflow-hidden">
         <div className="h-screen flex flex-col">
           <div className="flex justify-between items-center px-4 py-2 bg-black/30">
-            <h1 className="text-lg font-bold text-white">{currentRoom.config.roomName}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-white">{currentRoom.config.roomName}</h1>
+              <span className="text-sm text-white/60">
+                {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].icon}
+                {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].name}
+                {currentRoom.config.gameModifier && currentRoom.config.gameModifier !== GameModifier.NONE && (
+                  <span className="text-red-400">
+                    +{MODIFIER_INFO[currentRoom.config.gameModifier].icon}{MODIFIER_INFO[currentRoom.config.gameModifier].name}
+                  </span>
+                )}
+              </span>
+              <button
+                onClick={() => setShowRuleHelp(true)}
+                className="text-white/40 hover:text-gold"
+                title="查看规则"
+              >
+                <HelpCircle className="w-4 h-4" />
+              </button>
+            </div>
             <div className="flex gap-2">
               <button
                 onClick={isInVoteCooldown ? undefined : handleLeaveGame}
@@ -733,8 +757,14 @@ export default function GamePage() {
   const toCall = (gameState.currentBet || 0) - myBet
   const myChips = currentPlayer?.chips || 0
   const minRaise = gameState.minRaise || currentRoom.config.bigBlind
-  const maxRaise = myChips
   const totalPot = gameState.totalPot || 0
+  const variantRule = VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE]
+  const potLimitMaxRaise = variantRule.isPotLimit
+    ? totalPot + toCall + (gameState.currentBet || 0)
+    : myChips
+  const maxRaise = variantRule.isPotLimit
+    ? Math.min(myChips, potLimitMaxRaise)
+    : myChips
 
   const activePlayers = players.filter(p => gameState.playerStatus?.[p.id] !== undefined)
   const amIInCurrentGame = myPlayerId ? gameState.playerStatus?.[myPlayerId] !== undefined : false
@@ -813,27 +843,48 @@ export default function GamePage() {
             ❌ 连接已断开，请刷新页面
           </div>
         )}
-        <div className="flex justify-between items-center px-4 py-2 bg-black/30">
-          <h1 className="text-lg font-bold text-white">{currentRoom.config.roomName}</h1>
-          <div className="flex gap-2">
+        <div className="flex justify-between items-center px-2 md:px-4 py-1 md:py-2 bg-black/30">
+          <div className="flex items-center gap-1 md:gap-2 min-w-0 flex-1">
+            <h1 className="text-base md:text-lg font-bold text-white truncate">{currentRoom.config.roomName}</h1>
+            <span className="text-xs md:text-sm text-white/60 whitespace-nowrap">
+              {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].icon}
+              {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].name}
+              {currentRoom.config.gameModifier && currentRoom.config.gameModifier !== GameModifier.NONE && (
+                <span className="text-red-400">
+                  +{MODIFIER_INFO[currentRoom.config.gameModifier].icon}{MODIFIER_INFO[currentRoom.config.gameModifier].name}
+                </span>
+              )}
+            </span>
+            <span className="hidden md:inline text-white/40 text-xs truncate">
+              {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].shortDesc}
+            </span>
+            <button
+              onClick={() => setShowRuleHelp(true)}
+              className="text-white/40 hover:text-yellow-400 flex-shrink-0"
+              title="查看规则"
+            >
+              <HelpCircle className="w-3.5 h-3.5 md:w-4 md:h-4" />
+            </button>
+          </div>
+          <div className="flex gap-1 md:gap-2 flex-shrink-0">
             <button
               onClick={() => setShowActionLog(!showActionLog)}
-              className={`px-3 py-1 ${showActionLog ? 'bg-blue-500' : 'bg-blue-600'} text-white rounded hover:bg-blue-700 text-sm`}
+              className={`px-2 md:px-3 py-1 ${showActionLog ? 'bg-blue-500' : 'bg-blue-600'} text-white rounded hover:bg-blue-700 text-xs md:text-sm`}
             >
               📋日志
             </button>
             <button
               onClick={() => setShowScoreboard(!showScoreboard)}
-              className="px-3 py-1 bg-yellow-600 text-white rounded hover:bg-yellow-700 text-sm"
+              className="px-2 md:px-3 py-1 bg-yellow-600 text-white rounded hover:bg-yellow-700 text-xs md:text-sm"
             >
               记分牌
             </button>
             <button
               onClick={isInVoteCooldown ? undefined : handleLeaveGame}
               disabled={isInVoteCooldown}
-              className={`px-3 py-1 text-white rounded text-sm ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
+              className={`px-2 md:px-3 py-1 text-white rounded text-xs md:text-sm ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
             >
-              {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
+              {isInVoteCooldown ? `冷却${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
             </button>
           </div>
         </div>
@@ -862,24 +913,53 @@ export default function GamePage() {
                   <div className="text-white font-bold text-base md:text-xl mb-1 md:mb-2">
                     底池: ${totalPot}
                   </div>
-                  <div className="flex gap-1 md:gap-1.5 mb-1 md:mb-2">
-                    {[0, 1, 2, 3, 4].map(i => (
-                      <div key={i} className="md:hidden">
-                        {i < (gameState.communityCards?.length || 0)
-                          ? renderCard(gameState.communityCards[i], true)
-                          : <div className="w-8 h-12 border-2 border-dashed border-green-500/30 rounded-lg" />
-                        }
+                  {(() => {
+                    const boardCount = variantRule.boardCount || 1
+                    const boardCards = gameState.boardCards
+                    const isMultiBoard = boardCount > 1 && boardCards && boardCards.length > 0
+                    const boardLabels = ['A板', 'B板', 'C板']
+                    if (isMultiBoard) {
+                      return (
+                        <div className="space-y-1 mb-1 md:mb-2">
+                          {boardCards.map((board, bi) => (
+                            <div key={bi} className="flex flex-col items-center">
+                              <div className="text-white/40 text-[8px] md:text-[10px] mb-0.5">{boardLabels[bi]}</div>
+                              <div className="flex gap-0.5 md:gap-1">
+                                {[0, 1, 2, 3, 4].map(i => (
+                                  <div key={i}>
+                                    {i < board.length
+                                      ? renderCard(board[i])
+                                      : <div className="w-6 h-9 md:w-10 md:h-14 border border-dashed border-green-500/20 rounded" />
+                                    }
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                    }
+                    return (
+                      <div className="flex gap-1 md:gap-1.5 mb-1 md:mb-2">
+                        {[0, 1, 2, 3, 4].map(i => (
+                          <div key={i} className="md:hidden">
+                            {i < (gameState.communityCards?.length || 0)
+                              ? renderCard(gameState.communityCards[i], true)
+                              : <div className="w-8 h-12 border-2 border-dashed border-green-500/30 rounded-lg" />
+                            }
+                          </div>
+                        ))}
+                        {[0, 1, 2, 3, 4].map(i => (
+                          <div key={`md-${i}`} className="hidden md:block">
+                            {i < (gameState.communityCards?.length || 0)
+                              ? renderCard(gameState.communityCards[i])
+                              : <div className="w-14 h-20 border-2 border-dashed border-green-500/30 rounded-lg" />
+                            }
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                    {[0, 1, 2, 3, 4].map(i => (
-                      <div key={`md-${i}`} className="hidden md:block">
-                        {i < (gameState.communityCards?.length || 0)
-                          ? renderCard(gameState.communityCards[i])
-                          : <div className="w-14 h-20 border-2 border-dashed border-green-500/30 rounded-lg" />
-                        }
-                      </div>
-                    ))}
-                  </div>
+                    )
+                  })()}
                   {(gameState.currentBet || 0) > 0 && (
                     <div className="text-white/70 text-xs md:text-sm">当前注: ${gameState.currentBet}</div>
                   )}
@@ -958,12 +1038,11 @@ export default function GamePage() {
                       )}
                       {!isMe && status === 'playing' && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && (
                         <div className="flex gap-0.5 md:gap-1 mt-0.5 md:mt-1">
-                          <div className="w-8 h-12 md:w-14 md:h-20 bg-gradient-to-br from-blue-700 to-blue-900 rounded-lg border-2 border-blue-400 flex items-center justify-center shadow-md">
-                            <span className="text-blue-300 text-xs md:text-lg">?</span>
-                          </div>
-                          <div className="w-8 h-12 md:w-14 md:h-20 bg-gradient-to-br from-blue-700 to-blue-900 rounded-lg border-2 border-blue-400 flex items-center justify-center shadow-md">
-                            <span className="text-blue-300 text-xs md:text-lg">?</span>
-                          </div>
+                          {Array.from({ length: VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].holeCardCount }).map((_, ci) => (
+                            <div key={ci} className="w-8 h-12 md:w-14 md:h-20 bg-gradient-to-br from-blue-700 to-blue-900 rounded-lg border-2 border-blue-400 flex items-center justify-center shadow-md">
+                              <span className="text-blue-300 text-xs md:text-lg">?</span>
+                            </div>
+                          ))}
                         </div>
                       )}
                       {!isMe && (gameState.phase === 'showdown' || gameState.phase === 'ended') && status !== 'folded' && (
@@ -1030,7 +1109,7 @@ export default function GamePage() {
                   加注
                 </button>
               )}
-              {toCall > 0 && toCall < myChips && (
+              {myChips > toCall && (
                 <button
                   onClick={() => handleAction('all-in')}
                   className="px-3 md:px-4 py-1.5 md:py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-bold text-xs md:text-sm"
@@ -1040,7 +1119,13 @@ export default function GamePage() {
               )}
             </div>
             {showRaiseSlider && (
-              <div className="flex items-center gap-2 md:gap-3 px-2 md:px-4 py-1.5 md:py-2 bg-gray-800 rounded-lg">
+              <div className="px-2 md:px-4 py-1.5 md:py-2 bg-gray-800 rounded-lg">
+                {variantRule.isPotLimit && (
+                  <div className="text-center text-white/40 text-[10px] md:text-xs mb-1">
+                    底池限注 · 最大加注 ${potLimitMaxRaise}
+                  </div>
+                )}
+                <div className="flex items-center gap-2 md:gap-3">
                 <span className="text-yellow-300 font-bold text-xs md:text-sm min-w-[40px] md:min-w-[50px]">${raiseAmount}</span>
                 <input
                   type="range"
@@ -1076,6 +1161,7 @@ export default function GamePage() {
                 >
                   确认
                 </button>
+                </div>
               </div>
             )}
           </div>
@@ -1562,6 +1648,84 @@ export default function GamePage() {
         )}
 
       </div>
+
+      {/* 规则帮助弹窗 */}
+      {showRuleHelp && currentRoom && (() => {
+        const variant = currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE
+        const rule = VARIANT_RULES[variant]
+        const modifier = currentRoom.config.gameModifier
+        const modifierInfo = modifier && modifier !== GameModifier.NONE ? MODIFIER_INFO[modifier] : null
+        return (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="glass-panel w-full max-w-md p-6 max-h-[80vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                  <span className="text-2xl">{rule.icon}</span>
+                  {rule.name}
+                  {modifierInfo && (
+                    <span className="text-base text-red-400 flex items-center gap-1">
+                      +{modifierInfo.icon}{modifierInfo.name}
+                    </span>
+                  )}
+                </h3>
+                <button onClick={() => setShowRuleHelp(false)} className="text-white/60 hover:text-white">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <p className="text-white/80 text-sm leading-relaxed mb-4">
+                {rule.fullDesc}
+              </p>
+              {rule.specialRules.length > 0 && (
+                <div className="mb-4">
+                  <h4 className="text-white/90 font-semibold text-sm mb-2">特殊规则</h4>
+                  <ul className="space-y-1">
+                    {rule.specialRules.map((r, i) => (
+                      <li key={i} className="text-white/70 text-sm flex items-start gap-2">
+                        <span className="text-gold mt-0.5">•</span>
+                        {r}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {modifierInfo && (
+                <div className="mb-4 p-3 bg-red-900/20 border border-red-500/20 rounded-lg">
+                  <h4 className="text-red-400 font-semibold text-sm mb-2 flex items-center gap-1">
+                    {modifierInfo.icon} {modifierInfo.name}
+                  </h4>
+                  <p className="text-white/70 text-xs leading-relaxed mb-2">{modifierInfo.fullDesc}</p>
+                  {modifierInfo.specialRules.length > 0 && (
+                    <ul className="space-y-1">
+                      {modifierInfo.specialRules.map((r, i) => (
+                        <li key={i} className="text-white/60 text-xs flex items-start gap-2">
+                          <span className="text-red-400 mt-0.5">•</span>
+                          {r}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+              <div className="mt-2 pt-4 border-t border-white/10">
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="text-white/50">底牌数量</div>
+                  <div className="text-white/90">{rule.holeCardCount} 张</div>
+                  <div className="text-white/50">公共牌</div>
+                  <div className="text-white/90">{rule.communityCardCount} 张</div>
+                  <div className="text-white/50">下注方式</div>
+                  <div className="text-white/90">{rule.isFixedLimit ? '固定限注 (Fixed-Limit)' : rule.isPotLimit ? '底池限注 (Pot-Limit)' : '无限注 (No-Limit)'}</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowRuleHelp(false)}
+                className="w-full mt-4 btn-poker-primary"
+              >
+                知道了
+              </button>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

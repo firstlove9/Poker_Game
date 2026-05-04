@@ -8,6 +8,11 @@ import {
   HandRank,
   HandEvaluation,
   RunItTwiceChoice,
+  GameVariant,
+  GameModifier,
+  VariantRuleInfo,
+  VARIANT_RULES,
+  SHORT_DECK_RANKS,
 } from '../types/poker';
 import {
   GameState,
@@ -27,6 +32,8 @@ export interface GameConfig {
   smallBlind: number;
   bigBlind: number;
   actionTimeout: number;
+  variant: GameVariant;
+  modifier?: GameModifier;
 }
 
 export class GameEngine {
@@ -34,6 +41,7 @@ export class GameEngine {
   private deck: Deck;
   private players: RoomPlayer[];
   private config: GameConfig;
+  private variantRules: VariantRuleInfo;
   private hasActedThisRound: Set<string> = new Set();
   private lastAggressorIndex: number = -1;
   private actionCount: number = 0;
@@ -42,7 +50,8 @@ export class GameEngine {
   constructor(players: RoomPlayer[], dealerIndex: number, config: GameConfig) {
     this.players = players.filter(p => p.isReady && p.chips > 0);
     this.config = config;
-    this.deck = new Deck();
+    this.variantRules = VARIANT_RULES[config.variant || GameVariant.TEXAS_NLHE];
+    this.deck = new Deck(this.variantRules.deckRanks);
 
     const playerIds = this.players.map(p => p.id);
     const n = this.players.length;
@@ -64,6 +73,7 @@ export class GameEngine {
       phase: GamePhase.WAITING,
       deck: [],
       communityCards: [],
+      boardCards: [],
       pots: [],
       totalPot: 0,
       currentPlayerIndex: -1,
@@ -95,9 +105,12 @@ export class GameEngine {
       throw new Error('至少需要2名玩家才能开始游戏');
     }
 
-    this.deck = new Deck();
+    this.deck = new Deck(this.variantRules.deckRanks);
     this.deck.shuffle();
     this.state.communityCards = [];
+    this.state.boardCards = this.variantRules.boardCount > 1
+      ? Array.from({ length: this.variantRules.boardCount }, () => [])
+      : [];
     this.state.pots = [];
     this.state.totalPot = 0;
     this.state.roundBets = {};
@@ -144,11 +157,13 @@ export class GameEngine {
   }
 
   private dealHoleCards(): void {
+    const count = this.variantRules.holeCardCount;
     for (const player of this.players) {
-      this.state.playerCards[player.id] = [
-        this.deck.deal(),
-        this.deck.deal(),
-      ];
+      const cards: Card[] = [];
+      for (let i = 0; i < count; i++) {
+        cards.push(this.deck.deal());
+      }
+      this.state.playerCards[player.id] = cards as any;
     }
   }
 
@@ -247,7 +262,14 @@ export class GameEngine {
         if (!amount || amount <= 0) {
           return { success: false, error: '加注金额必须大于0' };
         }
-        const totalRaiseAmount = amount;
+        let raiseAmount = amount;
+        if (this.variantRules.isPotLimit) {
+          const maxRaise = this.getPotLimitRaise();
+          if (raiseAmount > maxRaise) {
+            raiseAmount = maxRaise;
+          }
+        }
+        const totalRaiseAmount = raiseAmount;
         const callPlusRaise = toCall + totalRaiseAmount;
         const actualAmount = Math.min(callPlusRaise, player.chips);
         player.chips -= actualAmount;
@@ -296,15 +318,20 @@ export class GameEngine {
 
     this.state.totalPot = this.calcTotalPot();
 
+    console.log(`[GameEngine] performAction: player=${player.name} action=${action} phase=${this.state.phase} hasActed=${JSON.stringify([...this.hasActedThisRound])} currentBet=${this.state.currentBet} roundBets=${JSON.stringify(this.state.roundBets)}`);
+
     if (this.checkOnlyOnePlayerLeft()) {
+      console.log(`[GameEngine] checkOnlyOnePlayerLeft -> endHand`);
       this.endHand();
     } else if (this.isBettingRoundComplete()) {
+      console.log(`[GameEngine] isBettingRoundComplete -> advancePhase`);
       if (this.checkHeadsUpAllIn()) {
         this.enterRunItTwiceChoice();
       } else {
         this.advancePhase();
       }
     } else {
+      console.log(`[GameEngine] advanceToNextPlayer`);
       this.advanceToNextPlayer();
     }
 
@@ -730,6 +757,7 @@ export class GameEngine {
   private advanceToNextPlayer(): void {
     const nextIndex = this.getNextActivePlayerIndex(this.state.currentPlayerIndex);
     if (nextIndex === -1) {
+      console.log(`[GameEngine] advanceToNextPlayer: nextIndex=-1, advancing phase`);
       this.state.currentPlayerIndex = -1;
       this.state.currentPlayerId = '';
       this.advancePhase();
@@ -737,6 +765,7 @@ export class GameEngine {
     }
     this.state.currentPlayerIndex = nextIndex;
     this.state.currentPlayerId = this.players[nextIndex]?.id || '';
+    console.log(`[GameEngine] advanceToNextPlayer: nextIndex=${nextIndex} currentPlayerId=${this.state.currentPlayerId}`);
   }
 
   private advancePhase(): void {
@@ -762,21 +791,48 @@ export class GameEngine {
       this.state.playerStatus[p.id] === PlayerStatus.PLAYING
     );
 
+    const boardCount = this.variantRules.boardCount || 1;
+    const isMultiBoard = boardCount > 1;
+
     switch (this.state.phase) {
       case GamePhase.PRE_FLOP:
         this.state.phase = GamePhase.FLOP;
-        this.deck.deal();
-        this.state.communityCards.push(this.deck.deal(), this.deck.deal(), this.deck.deal());
+        if (isMultiBoard) {
+          for (let b = 0; b < boardCount; b++) {
+            this.deck.deal();
+            this.state.boardCards[b].push(this.deck.deal(), this.deck.deal(), this.deck.deal());
+          }
+          this.state.communityCards = [...this.state.boardCards[0]];
+        } else {
+          this.deck.deal();
+          this.state.communityCards.push(this.deck.deal(), this.deck.deal(), this.deck.deal());
+        }
         break;
       case GamePhase.FLOP:
         this.state.phase = GamePhase.TURN;
-        this.deck.deal();
-        this.state.communityCards.push(this.deck.deal());
+        if (isMultiBoard) {
+          for (let b = 0; b < boardCount; b++) {
+            this.deck.deal();
+            this.state.boardCards[b].push(this.deck.deal());
+          }
+          this.state.communityCards = [...this.state.boardCards[0]];
+        } else {
+          this.deck.deal();
+          this.state.communityCards.push(this.deck.deal());
+        }
         break;
       case GamePhase.TURN:
         this.state.phase = GamePhase.RIVER;
-        this.deck.deal();
-        this.state.communityCards.push(this.deck.deal());
+        if (isMultiBoard) {
+          for (let b = 0; b < boardCount; b++) {
+            this.deck.deal();
+            this.state.boardCards[b].push(this.deck.deal());
+          }
+          this.state.communityCards = [...this.state.boardCards[0]];
+        } else {
+          this.deck.deal();
+          this.state.communityCards.push(this.deck.deal());
+        }
         break;
       case GamePhase.RIVER:
         this.endHand();
@@ -808,23 +864,43 @@ export class GameEngine {
 
     this.state.currentPlayerIndex = nextIndex;
     this.state.currentPlayerId = this.players[nextIndex]?.id || '';
+    console.log(`[GameEngine] advancePhase: newPhase=${this.state.phase} currentPlayerIndex=${nextIndex} currentPlayerId=${this.state.currentPlayerId} playingPlayers=${playingPlayers.length}`);
   }
 
   private dealRemainingCommunityCards(): void {
-    const needed = 5 - this.state.communityCards.length;
-    if (needed <= 0) return;
+    const boardCount = this.variantRules.boardCount || 1;
+    const isMultiBoard = boardCount > 1;
 
-    if (this.state.communityCards.length === 0) {
-      this.deck.deal();
-      this.state.communityCards.push(this.deck.deal(), this.deck.deal(), this.deck.deal());
-    }
-    if (this.state.communityCards.length < 5) {
-      this.deck.deal();
-      this.state.communityCards.push(this.deck.deal());
-    }
-    if (this.state.communityCards.length < 5) {
-      this.deck.deal();
-      this.state.communityCards.push(this.deck.deal());
+    if (isMultiBoard) {
+      for (let b = 0; b < boardCount; b++) {
+        const needed = 5 - this.state.boardCards[b].length;
+        if (needed <= 0) continue;
+        if (this.state.boardCards[b].length === 0) {
+          this.deck.deal();
+          this.state.boardCards[b].push(this.deck.deal(), this.deck.deal(), this.deck.deal());
+        }
+        while (this.state.boardCards[b].length < 5) {
+          this.deck.deal();
+          this.state.boardCards[b].push(this.deck.deal());
+        }
+      }
+      this.state.communityCards = [...this.state.boardCards[0]];
+    } else {
+      const needed = 5 - this.state.communityCards.length;
+      if (needed <= 0) return;
+
+      if (this.state.communityCards.length === 0) {
+        this.deck.deal();
+        this.state.communityCards.push(this.deck.deal(), this.deck.deal(), this.deck.deal());
+      }
+      if (this.state.communityCards.length < 5) {
+        this.deck.deal();
+        this.state.communityCards.push(this.deck.deal());
+      }
+      if (this.state.communityCards.length < 5) {
+        this.deck.deal();
+        this.state.communityCards.push(this.deck.deal());
+      }
     }
     this.state.phase = GamePhase.RIVER;
   }
@@ -905,6 +981,14 @@ export class GameEngine {
 
     if (activePlayers.length === 0) return;
 
+    const boardCount = this.variantRules.boardCount || 1;
+    const isMultiBoard = boardCount > 1;
+
+    if (isMultiBoard) {
+      this.determineMultiBoardWinners(activePlayers, boardCount);
+      return;
+    }
+
     const playerHands: Map<string, { hand: HandEvaluation; cards: Card[] }> = new Map();
 
     for (const player of activePlayers) {
@@ -912,9 +996,18 @@ export class GameEngine {
       const communityCards = this.state.communityCards;
 
       if (holeCards && communityCards.length >= 3) {
-        const allCards = [...holeCards, ...communityCards];
-        const hand = HandEvaluator.evaluate(allCards);
-        playerHands.set(player.id, { hand, cards: allCards });
+        let hand: HandEvaluation;
+        const variant = this.config.variant || GameVariant.TEXAS_NLHE;
+        const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD, GameVariant.OMAHA_THREE_BOARD];
+        if (omahaVariants.includes(variant)) {
+          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder);
+        } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
+          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder);
+        } else {
+          const allCards = [...holeCards, ...communityCards];
+          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+        }
+        playerHands.set(player.id, { hand, cards: [...holeCards, ...communityCards] });
       }
     }
 
@@ -949,6 +1042,62 @@ export class GameEngine {
         const winner = this.players.find(p => p.id === potWinnerIds[i]);
         if (winner) {
           winner.chips += splitAmount + (i === 0 ? remainder : 0);
+        }
+      }
+    }
+  }
+
+  private determineMultiBoardWinners(activePlayers: RoomPlayer[], boardCount: number): void {
+    const isOmaha = [GameVariant.OMAHA_DOUBLE_BOARD, GameVariant.OMAHA_THREE_BOARD].includes(
+      this.config.variant || GameVariant.TEXAS_NLHE
+    );
+
+    const totalPot = this.state.pots.reduce((sum, p) => sum + p.amount, 0);
+    const baseShare = Math.floor(totalPot / boardCount);
+    const remainder = totalPot - baseShare * boardCount;
+
+    for (let b = 0; b < boardCount; b++) {
+      const board = this.state.boardCards[b];
+      const potForBoard = b === 0 ? baseShare + remainder : baseShare;
+
+      const playerHands: Map<string, HandEvaluation> = new Map();
+      for (const player of activePlayers) {
+        const holeCards = this.state.playerCards[player.id];
+        if (holeCards && board.length >= 3) {
+          let hand: HandEvaluation;
+          if (isOmaha) {
+            hand = HandEvaluator.evaluateOmaha(holeCards, board, this.variantRules.handRankOrder);
+          } else {
+            const allCards = [...holeCards, ...board];
+            hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+          }
+          playerHands.set(player.id, hand);
+        }
+      }
+
+      let bestHand: HandEvaluation | null = null;
+      let winnerIds: string[] = [];
+
+      for (const player of activePlayers) {
+        const hand = playerHands.get(player.id);
+        if (!hand) continue;
+
+        if (!bestHand || hand.rank > bestHand.rank ||
+          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+          bestHand = hand;
+          winnerIds = [player.id];
+        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+          winnerIds.push(player.id);
+        }
+      }
+
+      const splitAmount = Math.floor(potForBoard / winnerIds.length);
+      const potRemainder = potForBoard - splitAmount * winnerIds.length;
+
+      for (let i = 0; i < winnerIds.length; i++) {
+        const winner = this.players.find(p => p.id === winnerIds[i]);
+        if (winner) {
+          winner.chips += splitAmount + (i === 0 ? potRemainder : 0);
         }
       }
     }
@@ -1022,6 +1171,13 @@ export class GameEngine {
     }
 
     const playerHands: Map<string, { hand: HandEvaluation; cards: Card[] }> = new Map();
+
+    const boardCount = this.variantRules.boardCount || 1;
+    const isMultiBoard = boardCount > 1;
+
+    if (isMultiBoard) {
+      return this.multiBoardShowdown(activePlayers, boardCount);
+    }
 
     for (const player of activePlayers) {
       const holeCards = this.state.playerCards[player.id];
@@ -1182,11 +1338,167 @@ export class GameEngine {
       Object.values(this.state.roundBets).reduce((sum, b) => sum + (b || 0), 0);
   }
 
+  private multiBoardShowdown(
+    activePlayers: RoomPlayer[],
+    boardCount: number
+  ): { winners: WinnerInfo[]; potResults: PotResult[]; allHands: PlayerHandInfo[] } {
+    const winners: WinnerInfo[] = [];
+    const potResults: PotResult[] = [];
+    const allHands: PlayerHandInfo[] = [];
+
+    const isOmaha = [GameVariant.OMAHA_DOUBLE_BOARD, GameVariant.OMAHA_THREE_BOARD].includes(
+      this.config.variant || GameVariant.TEXAS_NLHE
+    );
+
+    const rankNames: Record<number, string> = {
+      [HandRank.HIGH_CARD]: '高牌',
+      [HandRank.ONE_PAIR]: '一对',
+      [HandRank.TWO_PAIR]: '两对',
+      [HandRank.THREE_OF_A_KIND]: '三条',
+      [HandRank.STRAIGHT]: '顺子',
+      [HandRank.FLUSH]: '同花',
+      [HandRank.FULL_HOUSE]: '葫芦',
+      [HandRank.FOUR_OF_A_KIND]: '四条',
+      [HandRank.STRAIGHT_FLUSH]: '同花顺',
+      [HandRank.ROYAL_FLUSH]: '皇家同花顺',
+    };
+
+    const boardLabels = ['A', 'B', 'C'];
+    const totalPot = this.state.pots.reduce((sum, p) => sum + p.amount, 0);
+    const baseShare = Math.floor(totalPot / boardCount);
+    const remainder = totalPot - baseShare * boardCount;
+
+    const playerTotalWin = new Map<string, number>();
+    for (const p of activePlayers) {
+      playerTotalWin.set(p.id, 0);
+    }
+
+    const playerBestHand = new Map<string, HandEvaluation>();
+
+    for (let b = 0; b < boardCount; b++) {
+      const board = this.state.boardCards[b];
+      const potForBoard = b === 0 ? baseShare + remainder : baseShare;
+
+      const playerHands: Map<string, HandEvaluation> = new Map();
+      for (const player of activePlayers) {
+        const holeCards = this.state.playerCards[player.id];
+        if (holeCards && board.length >= 3) {
+          let hand: HandEvaluation;
+          if (isOmaha) {
+            hand = HandEvaluator.evaluateOmaha(holeCards, board, this.variantRules.handRankOrder);
+          } else {
+            const allCards = [...holeCards, ...board];
+            hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+          }
+          playerHands.set(player.id, hand);
+          if (!playerBestHand.has(player.id) || hand.rank > playerBestHand.get(player.id)!.rank) {
+            playerBestHand.set(player.id, hand);
+          }
+        }
+      }
+
+      let bestHand: HandEvaluation | null = null;
+      let winnerIds: string[] = [];
+
+      for (const player of activePlayers) {
+        const hand = playerHands.get(player.id);
+        if (!hand) continue;
+
+        if (!bestHand || hand.rank > bestHand.rank ||
+          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+          bestHand = hand;
+          winnerIds = [player.id];
+        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+          winnerIds.push(player.id);
+        }
+      }
+
+      const splitAmount = Math.floor(potForBoard / winnerIds.length);
+      const potRemainder = potForBoard - splitAmount * winnerIds.length;
+
+      for (let i = 0; i < winnerIds.length; i++) {
+        const wid = winnerIds[i];
+        const actualWin = splitAmount + (i === 0 ? potRemainder : 0);
+        playerTotalWin.set(wid, (playerTotalWin.get(wid) || 0) + actualWin);
+
+        const winner = this.players.find(p => p.id === wid);
+        const hand = playerHands.get(wid);
+        if (winner) {
+          winners.push({
+            playerId: wid,
+            playerName: winner.name,
+            winAmount: actualWin,
+            potType: b === 0 ? 'main' : 'side',
+            handRank: hand ? `${boardLabels[b]}板:${rankNames[hand.rank] || '未知'}` : '未知',
+            handDescription: hand?.description || '未知',
+            winningCards: hand?.cards || [],
+            holeCards: this.state.playerCards[wid] || [],
+            explanation: `${winner.name}在${boardLabels[b]}板以${hand ? rankNames[hand.rank] : '未知'}获胜`,
+          });
+        }
+      }
+
+      potResults.push({
+        potId: `board-${boardLabels[b]}`,
+        amount: potForBoard,
+        winners: winnerIds,
+        splitAmount,
+        remainder: potRemainder,
+      });
+    }
+
+    for (const player of activePlayers) {
+      const initialChips = this.playerInitialChips.get(player.id) || 0;
+      const netWin = player.chips - initialChips;
+      const isWinner = netWin > 0;
+      const hand = playerBestHand.get(player.id);
+
+      allHands.push({
+        playerId: player.id,
+        playerName: player.name,
+        holeCards: this.state.playerCards[player.id] || [],
+        handRank: hand ? rankNames[hand.rank] || '未知' : '未知',
+        handDescription: hand?.description || '未知',
+        isWinner,
+        winAmount: isWinner ? netWin : undefined,
+        netWin,
+      });
+    }
+
+    const foldedPlayers = this.players.filter(p =>
+      this.state.playerStatus[p.id] === PlayerStatus.FOLDED
+    );
+    for (const fp of foldedPlayers) {
+      const initialChips = this.playerInitialChips.get(fp.id) || 0;
+      allHands.push({
+        playerId: fp.id,
+        playerName: fp.name,
+        holeCards: this.state.playerCards[fp.id] || [],
+        handRank: '弃牌',
+        handDescription: '弃牌',
+        isWinner: false,
+        netWin: fp.chips - initialChips,
+      });
+    }
+
+    this.state.phase = GamePhase.ENDED;
+    return { winners, potResults, allHands };
+  }
+
   getState(): GameState {
     return { ...this.state };
   }
 
-  getPlayerCards(playerId: string): [Card, Card] | undefined {
+  getVariantRules(): VariantRuleInfo {
+    return this.variantRules;
+  }
+
+  getMaxRaise(playerId: string): number {
+    if (!this.variantRules.isPotLimit) return Infinity;
+    return this.getPotLimitRaise();
+  }
+
+  getPlayerCards(playerId: string): Card[] | undefined {
     return this.state.playerCards[playerId];
   }
 
@@ -1211,7 +1523,41 @@ export class GameEngine {
     const myBet = this.state.roundBets[playerId] || 0;
     const toCall = this.state.currentBet - myBet;
 
-    const actions: string[] = ['fold'];
+    const actions: string[] = [];
+
+    const modifier = this.config.modifier || GameModifier.NONE;
+    const isPreflop = this.state.phase === GamePhase.PRE_FLOP;
+    const noFoldPreflop = isPreflop && (
+      modifier === GameModifier.BOMB_POT ||
+      modifier === GameModifier.BOMB_POT_DOUBLE ||
+      modifier === GameModifier.ALL_IN_NO_FOLD ||
+      modifier === GameModifier.ALL_IN_ALL_ROUND
+    );
+    const noRaisePreflop = isPreflop && (
+      modifier === GameModifier.BOMB_POT ||
+      modifier === GameModifier.BOMB_POT_DOUBLE ||
+      modifier === GameModifier.ALL_IN_NO_FOLD ||
+      modifier === GameModifier.ALL_IN_ALL_ROUND ||
+      modifier === GameModifier.BLIND_SHOWDOWN
+    );
+    const forceAllInPreflop = isPreflop && modifier === GameModifier.ALL_IN_ALL_ROUND;
+    const blindShowdownPreflop = isPreflop && modifier === GameModifier.BLIND_SHOWDOWN;
+
+    if (!noFoldPreflop) {
+      actions.push('fold');
+    }
+
+    if (forceAllInPreflop) {
+      if (player.chips > 0) {
+        actions.push('all-in');
+      }
+      return actions;
+    }
+
+    if (blindShowdownPreflop) {
+      actions.push('all-in');
+      return actions;
+    }
 
     if (toCall <= 0) {
       actions.push('check');
@@ -1223,8 +1569,15 @@ export class GameEngine {
       actions.push('all-in');
     }
 
-    if (player.chips > toCall) {
-      actions.push('raise');
+    if (!noRaisePreflop) {
+      const isPotLimit = this.variantRules.isPotLimit;
+      const canRaise = isPotLimit
+        ? player.chips > toCall && this.getPotLimitRaise() > toCall
+        : player.chips > toCall;
+
+      if (canRaise) {
+        actions.push('raise');
+      }
     }
 
     if (player.chips > 0 && player.chips > toCall) {
@@ -1232,5 +1585,13 @@ export class GameEngine {
     }
 
     return actions;
+  }
+
+  private getPotLimitRaise(): number {
+    const pot = this.state.totalPot;
+    const currentPlayer = this.players[this.state.currentPlayerIndex];
+    const myBet = currentPlayer ? (this.state.roundBets[currentPlayer.id] || 0) : 0;
+    const callAmount = this.state.currentBet - myBet;
+    return pot + callAmount + this.state.currentBet;
   }
 }
