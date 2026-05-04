@@ -18,14 +18,21 @@ interface VoteInfo {
 export default function RoomPage() {
   const { roomId } = useParams<{ roomId: string }>()
   const navigate = useNavigate()
-  const { emit, on, off, isConnected, isReconnecting } = useSocketStore()
+  const { emit, on, off, isConnected, isReconnecting, playerId: socketPlayerId } = useSocketStore()
   const addToast = useToastStore((s) => s.addToast)
   const { currentRoom, currentPlayer, setCurrentRoom, setCurrentPlayer } = useGameStore()
 
-  const [isReady, setIsReady] = useState(false)
   const [voteInfo, setVoteInfo] = useState<VoteInfo | null>(null)
   const [showVoteModal, setShowVoteModal] = useState(false)
   const [showRuleHelp, setShowRuleHelp] = useState(false)
+
+  const getMyPlayerId = () => {
+    try {
+      return socketPlayerId || sessionStorage.getItem('poker_player_id')
+    } catch {
+      return null
+    }
+  }
 
   useEffect(() => {
     if (!roomId) return
@@ -44,9 +51,6 @@ export default function RoomPage() {
 
     const handlePlayerReadyChanged = (data: any) => {
       setCurrentRoom(data.room)
-      if (data.playerId === currentPlayer?.id) {
-        setIsReady(data.ready)
-      }
     }
 
     const handleGameStarted = (data: any) => {
@@ -107,7 +111,7 @@ export default function RoomPage() {
       off(ServerEvents.VOTE_LEAVE_ENDED, handleVoteLeaveEnded)
       off(ServerEvents.ROOM_LEFT, handleRoomLeft)
     }
-  }, [roomId, on, off, setCurrentRoom, navigate, currentPlayer?.id])
+  }, [roomId, on, off, setCurrentRoom, navigate, socketPlayerId, currentPlayer?.id])
 
   const fetchRoomInfo = async () => {
     try {
@@ -120,10 +124,10 @@ export default function RoomPage() {
       const data = await response.json()
       if (data.success) {
         setCurrentRoom(data.room)
-        const player = data.room.players.find((p: any) => p.id === currentPlayer?.id)
+        const pid = getMyPlayerId()
+        const player = data.room.players.find((p: any) => p.id === pid)
         if (player) {
           setCurrentPlayer(player)
-          setIsReady(player.isReady)
         }
       } else {
         addToast('房间不存在或已关闭', 'error')
@@ -137,7 +141,16 @@ export default function RoomPage() {
   }
 
   const handleLeaveRoom = async () => {
-    if (currentRoom && currentRoom.players.length > 1 && currentPlayer?.hasPlayedHand) {
+    const pid = getMyPlayerId()
+    const myPlayer = currentRoom?.players.find((p: any) => p.id === pid)
+    const role = myPlayer?.playerRoomRole
+    const needVote = role === 'active'
+      && currentRoom?.status === 'playing'
+      && pid
+      && currentRoom?.gameState?.playerStatus?.[pid] !== undefined
+      && currentRoom?.gameState?.playerStatus?.[pid] !== 'folded'
+
+    if (needVote) {
       try {
         await emit(ClientEvents.VOTE_LEAVE)
       } catch (error: any) {
@@ -146,11 +159,11 @@ export default function RoomPage() {
     } else {
       try {
         await emit(ClientEvents.LEAVE_ROOM)
+        setCurrentRoom(null)
+        navigate('/lobby')
       } catch (error: any) {
         addToast(error.message || '离开失败', 'error')
       }
-      setCurrentRoom(null)
-      navigate('/lobby')
     }
   }
 
@@ -163,9 +176,10 @@ export default function RoomPage() {
   }
 
   const handleToggleReady = async () => {
+    const pid = getMyPlayerId()
+    const currentReady = currentRoom?.players.find((p: any) => p.id === pid)?.isReady ?? false
     try {
-      await emit(ClientEvents.PLAYER_READY, !isReady)
-      setIsReady(!isReady)
+      await emit(ClientEvents.PLAYER_READY, !currentReady)
     } catch (error) {
       console.error('Failed to toggle ready:', error)
     }
@@ -190,10 +204,14 @@ export default function RoomPage() {
     )
   }
 
-  const isHost = currentPlayer?.id === currentRoom.config.hostId
+  const myPid = getMyPlayerId()
+  const myRoomPlayer = currentRoom.players.find((p: any) => p.id === myPid)
+  const isHost = myPid === currentRoom.config.hostId
+  const isReady = myRoomPlayer?.isReady ?? false
   const readyPlayers = currentRoom.players.filter(p => p.isReady).length
   const canStart = isHost && readyPlayers >= (currentRoom.config.minPlayers || 2)
   const isPlaying = currentRoom.status === 'playing'
+  const isSpectator = myRoomPlayer?.playerRoomRole === 'spectator'
 
   return (
     <div className="min-h-screen p-4 md:p-8">
@@ -269,7 +287,19 @@ export default function RoomPage() {
             className="text-white/60 hover:text-white flex items-center gap-2 transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
-            {currentRoom.players.length > 1 && currentPlayer?.hasPlayedHand ? '投票离开' : '返回大厅'}
+            {(() => {
+              const pid = getMyPlayerId()
+              const mp = currentRoom?.players.find((p: any) => p.id === pid)
+              const role = mp?.playerRoomRole
+              const needVote = role === 'active'
+                && currentRoom?.status === 'playing'
+                && pid
+                && currentRoom?.gameState?.playerStatus?.[pid] !== undefined
+                && currentRoom?.gameState?.playerStatus?.[pid] !== 'folded'
+              if (role === 'spectator') return '观战中 · 返回大厅'
+              if (needVote) return '投票离开'
+              return '返回大厅'
+            })()}
           </button>
 
           <div className="text-center">
@@ -354,7 +384,11 @@ export default function RoomPage() {
       <div className="max-w-4xl mx-auto">
         <div className="glass-panel p-4">
           <div className="flex flex-wrap justify-center gap-4">
-            {isPlaying ? (
+            {isSpectator ? (
+              <div className="text-yellow-400 text-lg font-bold">
+                👁️ 观战模式 — 牌局结束后可参与下一局
+              </div>
+            ) : isPlaying ? (
               <div className="text-gold text-lg font-bold animate-pulse">
                 🎴 游戏进行中，请等待本局结束...
               </div>

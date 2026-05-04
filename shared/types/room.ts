@@ -35,6 +35,14 @@ export enum RoomStatus {
   ENDED = 'ended',
 }
 
+// 玩家在房间中的角色
+export enum PlayerRoomRole {
+  SPECTATOR = 'spectator',
+  SEATED = 'seated',
+  ACTIVE = 'active',
+  BUSTED = 'busted',
+}
+
 // 房间中的玩家
 export interface RoomPlayer {
   id: string;
@@ -46,6 +54,7 @@ export interface RoomPlayer {
   isReady: boolean;
   isOnline: boolean;
   joinedAt: number;
+  playerRoomRole: PlayerRoomRole;
 }
 
 // 房间信息

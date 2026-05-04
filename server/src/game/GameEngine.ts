@@ -318,20 +318,15 @@ export class GameEngine {
 
     this.state.totalPot = this.calcTotalPot();
 
-    console.log(`[GameEngine] performAction: player=${player.name} action=${action} phase=${this.state.phase} hasActed=${JSON.stringify([...this.hasActedThisRound])} currentBet=${this.state.currentBet} roundBets=${JSON.stringify(this.state.roundBets)}`);
-
     if (this.checkOnlyOnePlayerLeft()) {
-      console.log(`[GameEngine] checkOnlyOnePlayerLeft -> endHand`);
       this.endHand();
     } else if (this.isBettingRoundComplete()) {
-      console.log(`[GameEngine] isBettingRoundComplete -> advancePhase`);
       if (this.checkHeadsUpAllIn()) {
         this.enterRunItTwiceChoice();
       } else {
         this.advancePhase();
       }
     } else {
-      console.log(`[GameEngine] advanceToNextPlayer`);
       this.advanceToNextPlayer();
     }
 
@@ -755,9 +750,9 @@ export class GameEngine {
   }
 
   private advanceToNextPlayer(): void {
-    const nextIndex = this.getNextActivePlayerIndex(this.state.currentPlayerIndex);
+    const fromIndex = this.state.currentPlayerIndex;
+    const nextIndex = this.getNextActivePlayerIndex(fromIndex);
     if (nextIndex === -1) {
-      console.log(`[GameEngine] advanceToNextPlayer: nextIndex=-1, advancing phase`);
       this.state.currentPlayerIndex = -1;
       this.state.currentPlayerId = '';
       this.advancePhase();
@@ -765,7 +760,6 @@ export class GameEngine {
     }
     this.state.currentPlayerIndex = nextIndex;
     this.state.currentPlayerId = this.players[nextIndex]?.id || '';
-    console.log(`[GameEngine] advanceToNextPlayer: nextIndex=${nextIndex} currentPlayerId=${this.state.currentPlayerId}`);
   }
 
   private advancePhase(): void {
@@ -864,7 +858,6 @@ export class GameEngine {
 
     this.state.currentPlayerIndex = nextIndex;
     this.state.currentPlayerId = this.players[nextIndex]?.id || '';
-    console.log(`[GameEngine] advancePhase: newPhase=${this.state.phase} currentPlayerIndex=${nextIndex} currentPlayerId=${this.state.currentPlayerId} playingPlayers=${playingPlayers.length}`);
   }
 
   private dealRemainingCommunityCards(): void {

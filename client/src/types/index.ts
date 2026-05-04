@@ -291,6 +291,13 @@ export interface Room {
   gameState?: GameState;
 }
 
+export enum PlayerRoomRole {
+  SPECTATOR = 'spectator',
+  SEATED = 'seated',
+  ACTIVE = 'active',
+  BUSTED = 'busted',
+}
+
 export interface RoomPlayer {
   id: string;
   name: string;
@@ -302,6 +309,7 @@ export interface RoomPlayer {
   isOnline: boolean;
   isNpc?: boolean;
   hasPlayedHand?: boolean;
+  playerRoomRole: PlayerRoomRole;
 }
 
 export interface GameState {
@@ -369,6 +377,7 @@ export enum ClientEvents {
   VOTE_LEAVE_RESPONSE = 'room:vote_leave_response',
   RUN_IT_TWICE_CHOICE = 'game:run_it_twice_choice',
   RUN_IT_TWICE_ROLL_DICE = 'game:run_it_twice_roll_dice',
+  DECLINE_REBUY = 'room:decline_rebuy',
 }
 
 export enum ServerEvents {
@@ -396,4 +405,5 @@ export enum ServerEvents {
   RUN_IT_TWICE_CHOICE_RESULT = 'game:run_it_twice_choice_result',
   RUN_IT_TWICE_DICE_RESULT = 'game:run_it_twice_dice_result',
   RUN_IT_TWICE_EXECUTING = 'game:run_it_twice_executing',
+  GAME_OVER = 'game:game_over',
 }

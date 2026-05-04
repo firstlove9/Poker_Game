@@ -3,7 +3,7 @@ import { RoomManager } from '../../room/RoomManager';
 import { GameEngine } from '../../game/GameEngine';
 import { ClientEvents, ServerEvents } from '../../types/events';
 import { PlayerAction, GamePhase, RunItTwiceChoice } from '../../types/poker';
-import { RoomStatus } from '../../types/room';
+import { RoomStatus, PlayerRoomRole, RoomPlayer } from '../../types/room';
 import { addActionLog, loadRoomLogs } from '../../room/ActionLogManager';
 
 export const gameEngines: Map<string, GameEngine> = new Map();
@@ -47,6 +47,26 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
   for (const p of room.players) {
     if (currentGamePlayerIds.has(p.id)) {
       p.isReady = false;
+    }
+  }
+
+  for (const p of room.players) {
+    if (p.playerRoomRole === PlayerRoomRole.SPECTATOR && !p.hasPlayedHand) {
+      const usedSeats = new Set(room.players.filter((rp: RoomPlayer) => rp.seatIndex >= 0).map((rp: RoomPlayer) => rp.seatIndex));
+      let seatIndex = 0;
+      while (usedSeats.has(seatIndex)) {
+        seatIndex++;
+      }
+      p.playerRoomRole = PlayerRoomRole.SEATED;
+      p.seatIndex = seatIndex;
+      p.chips = room.config.buyInMin;
+      p.totalBuyIn = room.config.buyInMin;
+    }
+  }
+
+  for (const p of room.players) {
+    if (p.playerRoomRole === PlayerRoomRole.ACTIVE && p.chips <= 0) {
+      p.playerRoomRole = PlayerRoomRole.BUSTED;
     }
   }
 
@@ -157,8 +177,6 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
 
       const result = gameEngine.performAction(playerId, playerAction, data.amount);
 
-      console.log(`[gameHandler] performAction result: playerId=${playerId} action=${data.action} amount=${data.amount} success=${result.success} error=${result.error || 'none'}`);
-
       if (result.success) {
         const gameState = gameEngine.getState();
         room.gameState = gameState;
@@ -174,7 +192,6 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
         const isGameEnding = gameState.phase === GamePhase.SHOWDOWN || gameState.phase === GamePhase.ENDED;
         const isRunItTwiceChoice = gameState.phase === GamePhase.RUN_IT_TWICE_CHOICE;
 
-        console.log(`[gameHandler] ACTION_RESULT: action=${data.action} phase=${gameState.phase} currentPlayerId=${gameState.currentPlayerId} isGameEnding=${isGameEnding}`);
         io.to(roomId).emit(ServerEvents.ACTION_RESULT, {
           playerId,
           playerName: actor?.name || playerId,
@@ -200,8 +217,6 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
 
           syncPlayerChipsToRoom(gameEngine, room);
 
-          autoRebuyBustedPlayers(room, io);
-
           for (const w of winners) {
             const roomPlayer = room.players.find((p: any) => p.id === w.playerId);
             if (roomPlayer) {
@@ -218,7 +233,6 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
           finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io);
         } else {
           const currentPlayerId = gameEngine.getCurrentPlayerId();
-          console.log(`[gameHandler] PLAYER_TURN: currentPlayerId=${currentPlayerId}`);
           if (currentPlayerId) {
             const currentPlayer = room.players.find(p => p.id === currentPlayerId);
             if (currentPlayer) {
@@ -326,7 +340,6 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
           const finalGameState = gameEngine.getState();
           room.gameState = finalGameState;
           syncPlayerChipsToRoom(gameEngine, room);
-          autoRebuyBustedPlayers(room, io);
 
           for (const w of winners) {
             const roomPlayer = room.players.find((p: any) => p.id === w.playerId);
@@ -429,7 +442,6 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
             const finalGameState = gameEngine.getState();
             room.gameState = finalGameState;
             syncPlayerChipsToRoom(gameEngine, room);
-            autoRebuyBustedPlayers(room, io);
 
             for (const w of winners) {
               const roomPlayer = room.players.find((p: any) => p.id === w.playerId);
@@ -532,24 +544,9 @@ function sanitizeRoom(room: any): any {
       isReady: p.isReady,
       isOnline: p.isOnline,
       hasPlayedHand: p.hasPlayedHand,
+      playerRoomRole: p.playerRoomRole,
     })),
   };
-}
-
-function autoRebuyBustedPlayers(room: any, io: any): void {
-  const buyInAmount = room.config.buyInMin;
-  for (const player of room.players) {
-    if (player.chips <= 0) {
-      player.chips = buyInAmount;
-      player.totalBuyIn += buyInAmount;
-      io.to(room.config.roomId).emit(ServerEvents.CHIPS_RECEIVED, {
-        playerId: player.id,
-        amount: buyInAmount,
-        autoRebuy: true,
-        room: sanitizeRoom(room),
-      });
-    }
-  }
 }
 
 export function setGameEngine(roomId: string, gameEngine: GameEngine): void {

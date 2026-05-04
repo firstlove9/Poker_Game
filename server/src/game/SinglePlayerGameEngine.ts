@@ -15,6 +15,7 @@ import {
 import {
   GameState,
   RoomPlayer,
+  PlayerRoomRole,
   WinnerInfo,
   PlayerHandInfo,
 } from '../types/room';
@@ -106,6 +107,7 @@ export class SinglePlayerGameEngine {
       isOnline: true,
       isNpc: false,
       joinedAt: Date.now(),
+      playerRoomRole: PlayerRoomRole.ACTIVE,
     });
     
     const npcNames = ['小明', '小红', '小强', '小李', '小张', '小王', '小刘'];
@@ -122,6 +124,7 @@ export class SinglePlayerGameEngine {
         isOnline: true,
         isNpc: true,
         joinedAt: Date.now(),
+        playerRoomRole: PlayerRoomRole.ACTIVE,
       });
     }
     

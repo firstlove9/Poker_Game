@@ -1,7 +1,7 @@
 import { Socket, Server } from 'socket.io';
 import { RoomManager } from '../../room/RoomManager';
 import { ClientEvents, ServerEvents } from '../../types/events';
-import { CreateRoomRequest, JoinRoomRequest, RoomStatus } from '../../types/room';
+import { CreateRoomRequest, JoinRoomRequest, RoomStatus, PlayerRoomRole } from '../../types/room';
 import { Card } from '../../types/poker';
 import { GameEngine, GameConfig } from '../../game/GameEngine';
 import { gameEngines } from './gameHandler';
@@ -17,10 +17,14 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
   const room = roomManager.getRoom(roomId);
   if (!room || room.status === RoomStatus.PLAYING) return false;
 
-  const readyPlayers = room.players.filter(p => p.isReady && p.chips > 0);
+  const readyPlayers = room.players.filter(p =>
+    p.isReady && p.chips > 0 && p.playerRoomRole !== PlayerRoomRole.SPECTATOR
+  );
   if (readyPlayers.length < room.config.minPlayers) return false;
 
-  const hasPlayedBefore = room.players.some(p => p.hasPlayedHand);
+  const hasPlayedBefore = room.players.some(p =>
+    p.playerRoomRole === PlayerRoomRole.ACTIVE || p.playerRoomRole === PlayerRoomRole.BUSTED
+  );
   if (hasPlayedBefore) {
     const DISCONNECT_TIMEOUT_MS = 30000;
     const now = Date.now();
@@ -53,6 +57,9 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
     const cards = gameEngine.getPlayerCards(player.id);
     if (cards) {
       player.hasPlayedHand = true;
+      if (player.playerRoomRole === PlayerRoomRole.SEATED) {
+        player.playerRoomRole = PlayerRoomRole.ACTIVE;
+      }
     }
   }
 
@@ -268,12 +275,19 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
       const roomId = roomManager.getPlayerRoomId(playerId);
       if (roomId) {
         const room = roomManager.getRoom(roomId);
-        if (room && room.status === RoomStatus.PLAYING) {
-          const gameEngine = gameEngines.get(roomId);
-          const isInCurrentGame = gameEngine?.getPlayers().some(p => p.id === playerId);
-          if (isInCurrentGame) {
-            safeCallback(callback, { success: false, error: '你正在游戏中，无需准备' });
+        if (room) {
+          const player = room.players.find(p => p.id === playerId);
+          if (player && player.playerRoomRole === PlayerRoomRole.BUSTED) {
+            safeCallback(callback, { success: false, error: '请先补筹码或选择不补' });
             return;
+          }
+          if (room.status === RoomStatus.PLAYING) {
+            const gameEngine = gameEngines.get(roomId);
+            const isInCurrentGame = gameEngine?.getPlayers().some(p => p.id === playerId);
+            if (isInCurrentGame) {
+              safeCallback(callback, { success: false, error: '你正在游戏中，无需准备' });
+              return;
+            }
           }
         }
       }
@@ -290,7 +304,9 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
           });
 
           if (ready && room && room.status !== RoomStatus.PLAYING) {
-            const hasPlayedBefore = room.players.some(p => p.hasPlayedHand);
+            const hasPlayedBefore = room.players.some(p =>
+              p.playerRoomRole === PlayerRoomRole.ACTIVE || p.playerRoomRole === PlayerRoomRole.BUSTED
+            );
             if (hasPlayedBefore) {
               tryStartGame(roomId, roomManager, io);
             }
@@ -389,6 +405,65 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
     }
   });
 
+  socket.on(ClientEvents.DECLINE_REBUY, (callback?: (response: any) => void) => {
+    try {
+      const playerId = socket.data.playerId;
+      if (!playerId) {
+        safeCallback(callback, { success: false, error: '未登录' });
+        return;
+      }
+
+      const roomId = roomManager.getPlayerRoomId(playerId);
+      if (!roomId) {
+        safeCallback(callback, { success: false, error: '你不在任何房间中' });
+        return;
+      }
+
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        safeCallback(callback, { success: false, error: '房间不存在' });
+        return;
+      }
+
+      const player = room.players.find(p => p.id === playerId);
+      if (!player) {
+        safeCallback(callback, { success: false, error: '玩家不在房间中' });
+        return;
+      }
+
+      if (player.playerRoomRole !== PlayerRoomRole.BUSTED) {
+        safeCallback(callback, { success: false, error: '只有破产玩家可以选择不补筹码' });
+        return;
+      }
+
+      player.playerRoomRole = PlayerRoomRole.SPECTATOR;
+      player.seatIndex = -1;
+      player.chips = 0;
+      player.isReady = false;
+
+      io.to(roomId).emit(ServerEvents.PLAYER_READY_CHANGED, {
+        playerId,
+        ready: false,
+        room: sanitizeRoom(room),
+      });
+
+      const activePlayers = room.players.filter((p: any) =>
+        p.playerRoomRole !== PlayerRoomRole.SPECTATOR && p.chips > 0
+      );
+      if (activePlayers.length <= 1 && room.players.filter((p: any) => p.playerRoomRole !== PlayerRoomRole.SPECTATOR).length <= 1) {
+        const winner = activePlayers[0] || null;
+        io.to(roomId).emit(ServerEvents.GAME_OVER, {
+          winner: winner ? { id: winner.id, name: winner.name, chips: winner.chips } : null,
+          room: sanitizeRoom(room),
+        });
+      }
+
+      safeCallback(callback, { success: true });
+    } catch (error) {
+      safeCallback(callback, { success: false, error: '操作失败' });
+    }
+  });
+
   socket.on(ClientEvents.VOTE_LEAVE, (callback?: (response: any) => void) => {
     try {
       const playerId = socket.data.playerId;
@@ -401,28 +476,38 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
       if (roomId) {
         const room = roomManager.getRoom(roomId);
         const player = room?.players.find(p => p.id === playerId);
-        if (player && !player.hasPlayedHand) {
-          const leaveResult = roomManager.leaveRoom(playerId, true);
-          if (leaveResult.success) {
-            socket.leave(roomId);
-            const updatedRoom = roomManager.getRoom(roomId);
-            if (updatedRoom) {
-              io.to(roomId).emit(ServerEvents.PLAYER_LEFT, {
-                playerId,
-                room: sanitizeRoom(updatedRoom),
-              });
-              io.emit(ServerEvents.ROOM_UPDATED, {
-                type: 'updated',
-                room: sanitizeRoom(updatedRoom),
-              });
-            } else {
-              io.emit(ServerEvents.ROOM_UPDATED, {
-                type: 'deleted',
-                roomId,
-              });
+        if (player && room) {
+          const role = player.playerRoomRole;
+          const canDirectLeave = role === PlayerRoomRole.SPECTATOR
+            || role === PlayerRoomRole.SEATED
+            || role === PlayerRoomRole.BUSTED
+            || (role === PlayerRoomRole.ACTIVE && room.status !== RoomStatus.PLAYING)
+            || (role === PlayerRoomRole.ACTIVE && room.status === RoomStatus.PLAYING
+              && (room.gameState?.playerStatus?.[playerId] === undefined
+                || room.gameState?.playerStatus?.[playerId] === 'folded'));
+          if (canDirectLeave) {
+            const leaveResult = roomManager.leaveRoom(playerId, true);
+            if (leaveResult.success) {
+              socket.leave(roomId);
+              const updatedRoom = roomManager.getRoom(roomId);
+              if (updatedRoom) {
+                io.to(roomId).emit(ServerEvents.PLAYER_LEFT, {
+                  playerId,
+                  room: sanitizeRoom(updatedRoom),
+                });
+                io.emit(ServerEvents.ROOM_UPDATED, {
+                  type: 'updated',
+                  room: sanitizeRoom(updatedRoom),
+                });
+              } else {
+                io.emit(ServerEvents.ROOM_UPDATED, {
+                  type: 'deleted',
+                  roomId,
+                });
+              }
+              safeCallback(callback, { success: true, directLeave: true });
+              return;
             }
-            safeCallback(callback, { success: true, directLeave: true });
-            return;
           }
         }
       }
@@ -567,6 +652,7 @@ function sanitizeRoom(room: any): any {
       isReady: p.isReady,
       isOnline: p.isOnline,
       hasPlayedHand: p.hasPlayedHand,
+      playerRoomRole: p.playerRoomRole,
     })),
   };
 }

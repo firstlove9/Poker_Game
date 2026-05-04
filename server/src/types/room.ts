@@ -50,6 +50,13 @@ export enum RoomStatus {
   ENDED = 'ended',
 }
 
+export enum PlayerRoomRole {
+  SPECTATOR = 'spectator',
+  SEATED = 'seated',
+  ACTIVE = 'active',
+  BUSTED = 'busted',
+}
+
 export interface RoomPlayer {
   id: string;
   name: string;
@@ -63,6 +70,7 @@ export interface RoomPlayer {
   joinedAt: number;
   hasPlayedHand?: boolean;
   disconnectedAt?: number;
+  playerRoomRole: PlayerRoomRole;
 }
 
 export interface Room {

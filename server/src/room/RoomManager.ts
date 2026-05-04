@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Room, RoomConfig, RoomStatus, RoomPlayer, CreateRoomRequest, JoinRoomRequest } from '../types/room';
+import { Room, RoomConfig, RoomStatus, RoomPlayer, CreateRoomRequest, JoinRoomRequest, PlayerRoomRole } from '../types/room';
 import { GameEngine, GameConfig } from '../game/GameEngine';
 import { GameVariant, GameModifier, VARIANT_RULES } from '../types/poker';
 
@@ -137,11 +137,24 @@ export class RoomManager {
       return { success: false, error: '该昵称已被使用，请更换' };
     }
 
-    // 找到空座位
-    const usedSeats = new Set(room.players.map(p => p.seatIndex));
-    let seatIndex = 0;
-    while (usedSeats.has(seatIndex)) {
-      seatIndex++;
+    const isSpectator = room.status === RoomStatus.PLAYING;
+
+    let seatIndex: number;
+    let chips: number;
+    let playerRoomRole: PlayerRoomRole;
+
+    if (isSpectator) {
+      seatIndex = -1;
+      chips = 0;
+      playerRoomRole = PlayerRoomRole.SPECTATOR;
+    } else {
+      const usedSeats = new Set(room.players.map(p => p.seatIndex));
+      seatIndex = 0;
+      while (usedSeats.has(seatIndex)) {
+        seatIndex++;
+      }
+      chips = room.config.buyInMin;
+      playerRoomRole = PlayerRoomRole.SEATED;
     }
 
     const player: RoomPlayer = {
@@ -149,11 +162,12 @@ export class RoomManager {
       name: request.playerName || `玩家${room.players.length + 1}`,
       avatar: this.generateAvatar(playerId),
       seatIndex,
-      chips: room.config.buyInMin,
-      totalBuyIn: room.config.buyInMin,
+      chips,
+      totalBuyIn: isSpectator ? 0 : room.config.buyInMin,
       isReady: false,
       isOnline: true,
       joinedAt: Date.now(),
+      playerRoomRole,
     };
 
     room.players.push(player);
@@ -176,7 +190,23 @@ export class RoomManager {
     }
 
     if (!force && room.status === RoomStatus.PLAYING) {
-      return { success: false, error: '牌局进行中，请等待本局结束后退出' };
+      const player = room.players.find(p => p.id === playerId);
+      if (player) {
+        const role = player.playerRoomRole;
+        if (role === PlayerRoomRole.SPECTATOR || role === PlayerRoomRole.SEATED || role === PlayerRoomRole.BUSTED) {
+          // 观战者、未参与牌局者、破产者可直接离开
+        } else if (role === PlayerRoomRole.ACTIVE) {
+          const playerStatus = room.gameState?.playerStatus?.[playerId];
+          if (playerStatus === undefined) {
+            // ACTIVE 但不在当前手牌中，可直接离开
+          } else if (playerStatus === 'folded') {
+            // 已弃牌，无利益牵涉，可直接离开
+          } else {
+            // 在手牌中且未弃牌（PLAYING / ALL_IN），需投票
+            return { success: false, error: '牌局进行中，请发起投票离开' };
+          }
+        }
+      }
     }
 
     room.players = room.players.filter(p => p.id !== playerId);
@@ -209,6 +239,14 @@ export class RoomManager {
     const player = room.players.find(p => p.id === playerId);
     if (!player) {
       return { success: false, error: '玩家不在房间中' };
+    }
+
+    if (player.playerRoomRole === PlayerRoomRole.SPECTATOR) {
+      return { success: false, error: '观战者无法准备' };
+    }
+
+    if (player.playerRoomRole === PlayerRoomRole.BUSTED) {
+      return { success: false, error: '请先补筹码或选择不补' };
     }
 
     player.isReady = ready;
@@ -281,6 +319,20 @@ export class RoomManager {
     const amount = room.config.buyInMin;
     player.chips += amount;
     player.totalBuyIn += amount;
+
+    if (player.playerRoomRole === PlayerRoomRole.BUSTED && player.chips > 0) {
+      player.playerRoomRole = PlayerRoomRole.ACTIVE;
+    }
+
+    if (player.playerRoomRole === PlayerRoomRole.SPECTATOR && player.chips > 0) {
+      const usedSeats = new Set(room.players.filter(rp => rp.seatIndex >= 0 && rp.id !== playerId).map(rp => rp.seatIndex));
+      let seatIndex = 0;
+      while (usedSeats.has(seatIndex)) {
+        seatIndex++;
+      }
+      player.seatIndex = seatIndex;
+      player.playerRoomRole = PlayerRoomRole.ACTIVE;
+    }
 
     return { success: true, amount };
   }

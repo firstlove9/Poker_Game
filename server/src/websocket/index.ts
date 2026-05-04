@@ -2,8 +2,10 @@ import { Server, Socket } from 'socket.io';
 import { RoomManager } from '../room/RoomManager';
 import { handleRoomEvents, tryStartGame } from './handlers/roomHandler';
 import { handleGameEvents } from './handlers/gameHandler';
+import { handleAICommands } from './handlers/aiHandler';
 import { ServerEvents } from '../types/events';
-import { RoomStatus } from '../types/room';
+import { RoomStatus, PlayerRoomRole } from '../types/room';
+import { AI_NAMESPACE, AICommand, AI_COMMAND_REGISTRY } from '../types/ai';
 import { gameEngines } from './handlers/gameHandler';
 
 function sanitizeRoom(room: any): any {
@@ -19,6 +21,7 @@ function sanitizeRoom(room: any): any {
       totalBuyIn: p.totalBuyIn,
       isReady: p.isReady,
       isOnline: p.isOnline,
+      playerRoomRole: p.playerRoomRole,
     })),
   };
 }
@@ -154,7 +157,9 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
               isTemporary: true,
             });
 
-            const hasPlayedBefore = room.players.some(p => p.hasPlayedHand);
+            const hasPlayedBefore = room.players.some(p =>
+              p.playerRoomRole === PlayerRoomRole.ACTIVE || p.playerRoomRole === PlayerRoomRole.BUSTED
+            );
             if (hasPlayedBefore && room.status !== RoomStatus.PLAYING) {
               const disconnectedPlayerId = playerId;
               setTimeout(() => {
@@ -162,7 +167,22 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
                 if (!currentRoom || currentRoom.status === RoomStatus.PLAYING) return;
                 const dp = currentRoom.players.find(p => p.id === disconnectedPlayerId);
                 if (dp && !dp.isOnline && dp.disconnectedAt) {
-                  tryStartGame(roomId, roomManager, io);
+                  if (dp.playerRoomRole === PlayerRoomRole.SPECTATOR
+                    || dp.playerRoomRole === PlayerRoomRole.SEATED
+                    || dp.playerRoomRole === PlayerRoomRole.BUSTED
+                    || (dp.playerRoomRole === PlayerRoomRole.ACTIVE && currentRoom.status === RoomStatus.WAITING)) {
+                    roomManager.leaveRoom(disconnectedPlayerId, true);
+                    io.to(roomId).emit(ServerEvents.PLAYER_LEFT, {
+                      playerId: disconnectedPlayerId,
+                      room: sanitizeRoom(currentRoom),
+                    });
+                    io.emit(ServerEvents.ROOM_UPDATED, {
+                      type: 'updated',
+                      room: sanitizeRoom(currentRoom),
+                    });
+                  } else {
+                    tryStartGame(roomId, roomManager, io);
+                  }
                 }
               }, 31000);
             }
@@ -171,6 +191,59 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
       }
 
       playerSocketMap.delete(playerId);
+    });
+  });
+
+  const aiNamespace = io.of(AI_NAMESPACE);
+  aiNamespace.on('connection', (socket: Socket) => {
+    console.log(`[AI] AI client connected: ${socket.id}`);
+
+    const queryPlayerId = socket.handshake.query.playerId as string | undefined;
+    const queryName = (socket.handshake.query.name as string) || 'AI_Player';
+
+    let playerId: string;
+    if (queryPlayerId) {
+      playerId = queryPlayerId;
+    } else {
+      playerId = `ai_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    }
+
+    socket.data.playerId = playerId;
+    socket.data.isAI = true;
+
+    socket.emit('ai:connected', {
+      ok: true,
+      code: 0,
+      data: {
+        playerId,
+        namespace: AI_NAMESPACE,
+        protocol: '1.0',
+        commands: Object.values(AI_COMMAND_REGISTRY),
+      },
+      log: `Connected as ${playerId}. Type "help" to see available commands.`,
+    });
+
+    handleAICommands(socket, io, roomManager);
+
+    socket.on('disconnect', () => {
+      console.log(`[AI] AI client disconnected: ${socket.id} (playerId=${playerId})`);
+
+      const roomId = roomManager.getPlayerRoomId(playerId);
+      if (roomId) {
+        const room = roomManager.getRoom(roomId);
+        if (room) {
+          const player = room.players.find(p => p.id === playerId);
+          if (player) {
+            player.isOnline = false;
+            player.disconnectedAt = Date.now();
+            io.to(roomId).emit(ServerEvents.PLAYER_LEFT, {
+              playerId,
+              room: sanitizeRoom(room),
+              isTemporary: true,
+            });
+          }
+        }
+      }
     });
   });
 }

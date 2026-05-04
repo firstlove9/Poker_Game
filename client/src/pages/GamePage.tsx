@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useSocketStore } from '../stores/socketStore'
 import { useGameStore } from '../stores/gameStore'
@@ -52,6 +52,9 @@ export default function GamePage() {
   const [isReady, setIsReady] = useState(false)
   const [isWaitingForStart, setIsWaitingForStart] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const gameStartedDuringReadyRef = useRef(false)
+  const [gameOverInfo, setGameOverInfo] = useState<{ winner: { id: string; name: string; chips: number } | null } | null>(null)
+  const [isGameOver, setIsGameOver] = useState(false)
   const [voteInfo, setVoteInfo] = useState<{
     initiatorId: string
     initiatorName: string
@@ -123,6 +126,7 @@ export default function GamePage() {
     if (!roomId) return
 
     const handleGameStarted = (data: any) => {
+      gameStartedDuringReadyRef.current = true
       setCurrentRoom(data.room)
       setGameState(data.gameState)
       setShowResult(false)
@@ -194,6 +198,21 @@ export default function GamePage() {
         if (player) {
           setCurrentPlayer(player)
         }
+      }
+      if (data.playerId && data.amount) {
+        const playerName = currentRoom?.players?.find((p: any) => p.id === data.playerId)?.name || '玩家'
+        addLog(playerName, `补充筹码 ${data.amount}`, data.amount)
+        if (data.playerId !== myPlayerId) {
+          addToast(`${playerName} 补充筹码 $${data.amount}`, 'info')
+        }
+      }
+    }
+
+    const handleGameOver = (data: any) => {
+      setGameOverInfo({ winner: data.winner })
+      setIsGameOver(true)
+      if (data.room) {
+        setCurrentRoom(data.room)
       }
     }
 
@@ -409,6 +428,7 @@ export default function GamePage() {
     on(ServerEvents.RUN_IT_TWICE_CHOICE_RESULT, handleRunItTwiceChoiceResult)
     on(ServerEvents.RUN_IT_TWICE_DICE_RESULT, handleRunItTwiceDiceResult)
     on(ServerEvents.RUN_IT_TWICE_EXECUTING, handleRunItTwiceExecuting)
+    on(ServerEvents.GAME_OVER, handleGameOver)
 
     fetchGameState()
 
@@ -432,6 +452,7 @@ export default function GamePage() {
       off(ServerEvents.RUN_IT_TWICE_CHOICE_RESULT, handleRunItTwiceChoiceResult)
       off(ServerEvents.RUN_IT_TWICE_DICE_RESULT, handleRunItTwiceDiceResult)
       off(ServerEvents.RUN_IT_TWICE_EXECUTING, handleRunItTwiceExecuting)
+      off(ServerEvents.GAME_OVER, handleGameOver)
     }
   }, [roomId, myPlayerId])
 
@@ -505,8 +526,14 @@ export default function GamePage() {
 
   const handleLeaveGame = async () => {
     const myPlayer = currentRoom?.players?.find((p: any) => p.id === myPlayerId)
-    const hasPlayed = myPlayer?.hasPlayedHand
-    if (hasPlayed) {
+    const role = myPlayer?.playerRoomRole
+    const needVote = role === 'active'
+      && currentRoom?.status === 'playing'
+      && myPlayerId
+      && currentRoom?.gameState?.playerStatus?.[myPlayerId] !== undefined
+      && currentRoom?.gameState?.playerStatus?.[myPlayerId] !== 'folded'
+
+    if (needVote) {
       try {
         const result = await emit(ClientEvents.VOTE_LEAVE)
         if (result?.directLeave) {
@@ -529,6 +556,44 @@ export default function GamePage() {
     }
   }
 
+  const handleRebuy = async () => {
+    if (isSubmitting) return
+    setIsSubmitting(true)
+    try {
+      const result = await emit(ClientEvents.GET_CHIPS)
+      if (result?.success) {
+        setIsReady(false)
+        setShowResult(false)
+        setIsWaitingForStart(true)
+      } else {
+        addToast(result?.error || '补筹码失败', 'error')
+      }
+    } catch (error: any) {
+      addToast(error.message || '补筹码失败', 'error')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleDeclineRebuy = async () => {
+    if (isSubmitting) return
+    setIsSubmitting(true)
+    try {
+      const result = await emit(ClientEvents.DECLINE_REBUY)
+      if (result?.success) {
+        setIsReady(false)
+        setShowResult(false)
+        setIsWaitingForStart(true)
+      } else {
+        addToast(result?.error || '操作失败', 'error')
+      }
+    } catch (error: any) {
+      addToast(error.message || '操作失败', 'error')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const handleVoteResponse = async (approve: boolean) => {
     try {
       await emit(ClientEvents.VOTE_LEAVE_RESPONSE, { approve })
@@ -540,13 +605,20 @@ export default function GamePage() {
   const handleReady = async () => {
     if (isSubmitting) return
     setIsSubmitting(true)
+    gameStartedDuringReadyRef.current = false
     try {
       const result = await emit(ClientEvents.PLAYER_READY, true)
       if (result?.success) {
-        setIsReady(true)
-        setShowResult(false)
-        if (!gameState || gameState.phase === 'waiting' || gameState.phase === 'showdown' || gameState.phase === 'ended') {
-          setIsWaitingForStart(true)
+        if (gameStartedDuringReadyRef.current) {
+          setIsReady(false)
+          setIsWaitingForStart(false)
+        } else {
+          setIsReady(true)
+          setShowResult(false)
+          setIsMyTurn(false)
+          if (!gameState || gameState.phase === 'waiting' || gameState.phase === 'showdown' || gameState.phase === 'ended') {
+            setIsWaitingForStart(true)
+          }
         }
       }
     } catch (error: any) {
@@ -662,7 +734,15 @@ export default function GamePage() {
   }
 
   const isInVoteCooldown = voteCooldownRemaining > 0
-  const myPlayerHasPlayed = currentRoom?.players?.find((p: any) => p.id === myPlayerId)?.hasPlayedHand
+  const myPlayer = currentRoom?.players?.find((p: any) => p.id === myPlayerId)
+  const myPlayerRole = myPlayer?.playerRoomRole
+  const isBusted = myPlayerRole === 'busted'
+  const isSpectatorFromBust = myPlayerRole === 'spectator'
+  const myPlayerNeedVote = myPlayerRole === 'active'
+    && currentRoom?.status === 'playing'
+    && myPlayerId
+    && currentRoom?.gameState?.playerStatus?.[myPlayerId] !== undefined
+    && currentRoom?.gameState?.playerStatus?.[myPlayerId] !== 'folded'
 
   if (!currentRoom) {
     return (
@@ -702,7 +782,7 @@ export default function GamePage() {
                 disabled={isInVoteCooldown}
                 className={`px-3 py-1 text-white rounded text-sm ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
               >
-                {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
+                {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerNeedVote ? '投票离开' : '离开')}
               </button>
             </div>
           </div>
@@ -742,7 +822,7 @@ export default function GamePage() {
                   disabled={isInVoteCooldown}
                   className={`px-6 py-3 text-white rounded-lg font-bold text-lg ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-red-700 hover:bg-red-800'}`}
                 >
-                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
+                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerNeedVote ? '投票离开' : '离开')}
                 </button>
               </div>
             </div>
@@ -884,7 +964,7 @@ export default function GamePage() {
               disabled={isInVoteCooldown}
               className={`px-2 md:px-3 py-1 text-white rounded text-xs md:text-sm ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
             >
-              {isInVoteCooldown ? `冷却${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
+              {isInVoteCooldown ? `冷却${voteCooldownRemaining}s` : (myPlayerNeedVote ? '投票离开' : '离开')}
             </button>
           </div>
         </div>
@@ -1064,7 +1144,7 @@ export default function GamePage() {
           <div className="text-center text-red-400 text-sm py-1 bg-black/30">{message}</div>
         )}
 
-        {isMyTurn && !showResult && (
+        {isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && (
           <div className="bg-gray-900/90 border-t border-gray-700 p-2 md:p-3">
             <div className="text-center text-white/60 text-xs md:text-sm mb-1 md:mb-2">
               轮到你行动 {toCall > 0 ? `(需跟注 $${toCall})` : '(可以过牌)'}
@@ -1170,10 +1250,20 @@ export default function GamePage() {
         {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && !amIInCurrentGame && (
           <div className="bg-gray-900/90 border-t border-gray-700 p-2 md:p-3">
             <div className="text-center text-yellow-300 text-xs md:text-sm">
-              ⏳ 当前局进行中，请等待本局结束后加入
+              {isSpectatorFromBust ? '👁️ 你正在观战' : '⏳ 当前局进行中，请等待本局结束后加入'}
             </div>
             <div className="flex justify-center gap-2 md:gap-3 mt-1.5 md:mt-2">
-              {!isReady && (
+              {isSpectatorFromBust ? (
+                <>
+                  <button
+                    onClick={handleRebuy}
+                    disabled={isSubmitting}
+                    className={`px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    补筹码
+                  </button>
+                </>
+              ) : !isReady ? (
                 <button
                   onClick={handleReady}
                   disabled={isSubmitting}
@@ -1181,8 +1271,7 @@ export default function GamePage() {
                 >
                   准备下一局
                 </button>
-              )}
-              {isReady && (
+              ) : (
                 <span className="text-green-400 text-xs md:text-sm">✅ 已准备，等待本局结束...</span>
               )}
             </div>
@@ -1208,7 +1297,31 @@ export default function GamePage() {
                 ))}
               </div>
               <div className="flex gap-1.5 md:gap-2">
-                {isReady && (
+                {isGameOver ? (
+                  <span className="text-yellow-400 text-xs md:text-sm self-center">🏆 游戏已结束</span>
+                ) : isBusted || isSpectatorFromBust ? (
+                  <>
+                    <button
+                      onClick={handleRebuy}
+                      disabled={isSubmitting}
+                      className={`px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      补筹码
+                    </button>
+                    {isBusted && (
+                      <button
+                        onClick={handleDeclineRebuy}
+                        disabled={isSubmitting}
+                        className={`px-3 md:px-4 py-1.5 md:py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        不补（观战）
+                      </button>
+                    )}
+                    {isSpectatorFromBust && (
+                      <span className="text-yellow-400 text-xs md:text-sm self-center">👁️ 观战中</span>
+                    )}
+                  </>
+                ) : isReady ? (
                   <button
                     onClick={handleCancelReady}
                     disabled={isSubmitting}
@@ -1216,8 +1329,7 @@ export default function GamePage() {
                   >
                     取消准备
                   </button>
-                )}
-                {!isReady && (
+                ) : (
                   <button
                     onClick={handleReady}
                     disabled={isSubmitting}
@@ -1231,7 +1343,7 @@ export default function GamePage() {
                   disabled={isInVoteCooldown}
                   className={`px-3 md:px-4 py-1.5 md:py-2 text-white rounded-lg font-bold text-xs md:text-sm ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-red-700 hover:bg-red-800'}`}
                 >
-                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
+                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerNeedVote ? '投票离开' : '离开')}
                 </button>
               </div>
             </div>
@@ -1579,20 +1691,90 @@ export default function GamePage() {
               </div>
 
               <div className="flex gap-2 md:gap-3">
-                <button
-                  onClick={handleReady}
-                  disabled={isSubmitting}
-                  className={`flex-1 px-4 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  准备下一局
-                </button>
+                {isGameOver ? (
+                  <span className="text-yellow-400 text-sm md:text-lg self-center">🏆 游戏已结束</span>
+                ) : isBusted || isSpectatorFromBust ? (
+                  <>
+                    <button
+                      onClick={handleRebuy}
+                      disabled={isSubmitting}
+                      className={`flex-1 px-4 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      补筹码
+                    </button>
+                    {isBusted && (
+                      <button
+                        onClick={handleDeclineRebuy}
+                        disabled={isSubmitting}
+                        className={`flex-1 px-4 md:px-6 py-2 md:py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        不补（观战）
+                      </button>
+                    )}
+                    {isSpectatorFromBust && (
+                      <span className="text-yellow-400 text-sm md:text-lg self-center">👁️ 观战中</span>
+                    )}
+                  </>
+                ) : (
+                  <button
+                    onClick={handleReady}
+                    disabled={isSubmitting}
+                    className={`flex-1 px-4 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    准备下一局
+                  </button>
+                )}
                 <button
                   onClick={isInVoteCooldown ? undefined : handleLeaveGame}
                   disabled={isInVoteCooldown}
                   className={`px-4 md:px-6 py-2 md:py-3 text-white rounded-lg font-bold text-sm md:text-lg ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
                 >
-                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerHasPlayed ? '投票离开' : '离开')}
+                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerNeedVote ? '投票离开' : '离开')}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {gameOverInfo && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-2 md:p-4">
+            <div className="bg-gray-800 rounded-xl p-4 md:p-8 max-w-lg w-full mx-2 md:mx-4 border border-yellow-500/50 text-center">
+              <div className="text-4xl md:text-6xl mb-3 md:mb-4">🏆</div>
+              <h2 className="text-2xl md:text-3xl font-bold text-yellow-300 mb-2 md:mb-3">游戏结束</h2>
+              {gameOverInfo.winner ? (
+                <div className="mb-4 md:mb-6">
+                  <p className="text-white text-lg md:text-xl mb-2">
+                    <span className="text-yellow-300 font-bold">{gameOverInfo.winner.name}</span> 获得最终胜利！
+                  </p>
+                  <p className="text-white/60 text-sm md:text-base">
+                    最终筹码: <span className="text-yellow-300 font-bold">${gameOverInfo.winner.chips}</span>
+                  </p>
+                </div>
+              ) : (
+                <p className="text-white/60 text-lg mb-4 md:mb-6">所有玩家均已破产</p>
+              )}
+              <div className="flex flex-col gap-2 md:gap-3">
+                <button
+                  onClick={isInVoteCooldown ? undefined : handleLeaveGame}
+                  disabled={isInVoteCooldown}
+                  className="w-full px-4 md:px-6 py-2 md:py-3 bg-red-700 hover:bg-red-800 text-white rounded-lg font-bold text-sm md:text-lg transition-colors"
+                >
+                  退出房间
+                </button>
+                <div className="flex gap-2 md:gap-3">
+                  <button
+                    onClick={() => { setGameOverInfo(null); setShowActionLog(true) }}
+                    className="flex-1 px-3 md:px-4 py-2 md:py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-bold text-xs md:text-sm transition-colors"
+                  >
+                    📋 牌局日志
+                  </button>
+                  <button
+                    onClick={() => { setGameOverInfo(null); setShowScoreboard(true) }}
+                    className="flex-1 px-3 md:px-4 py-2 md:py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-bold text-xs md:text-sm transition-colors"
+                  >
+                    📊 记分牌
+                  </button>
+        </div>
               </div>
             </div>
           </div>
