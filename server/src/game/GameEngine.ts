@@ -559,9 +559,18 @@ export class GameEngine {
       for (const player of activePlayers) {
         const holeCards = this.state.playerCards[player.id];
         if (holeCards && board.length >= 3) {
-          const allCards = [...holeCards, ...board];
-          const hand = HandEvaluator.evaluate(allCards);
-          playerHands.set(player.id, { hand, cards: allCards });
+          let hand: HandEvaluation;
+          const variant = this.config.variant || GameVariant.TEXAS_NLHE;
+          const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD, GameVariant.OMAHA_THREE_BOARD];
+          if (omahaVariants.includes(variant)) {
+            hand = HandEvaluator.evaluateOmaha(holeCards, board, this.variantRules.handRankOrder);
+          } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
+            hand = HandEvaluator.evaluateCrazyPineapple(holeCards, board, this.variantRules.handRankOrder);
+          } else {
+            const allCards = [...holeCards, ...board];
+            hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+          }
+          playerHands.set(player.id, { hand, cards: [...holeCards, ...board] });
         }
       }
 
@@ -1177,9 +1186,18 @@ export class GameEngine {
       const communityCards = this.state.communityCards;
 
       if (holeCards && communityCards.length >= 3) {
-        const allCards = [...holeCards, ...communityCards];
-        const hand = HandEvaluator.evaluate(allCards);
-        playerHands.set(player.id, { hand, cards: allCards });
+        let hand: HandEvaluation;
+        const variant = this.config.variant || GameVariant.TEXAS_NLHE;
+        const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD, GameVariant.OMAHA_THREE_BOARD];
+        if (omahaVariants.includes(variant)) {
+          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder);
+        } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
+          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder);
+        } else {
+          const allCards = [...holeCards, ...communityCards];
+          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+        }
+        playerHands.set(player.id, { hand, cards: [...holeCards, ...communityCards] });
       }
     }
 

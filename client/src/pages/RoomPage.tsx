@@ -113,6 +113,12 @@ export default function RoomPage() {
     }
   }, [roomId, on, off, setCurrentRoom, navigate, socketPlayerId, currentPlayer?.id])
 
+  useEffect(() => {
+    if (isConnected && roomId) {
+      fetchRoomInfo()
+    }
+  }, [isConnected])
+
   const fetchRoomInfo = async () => {
     try {
       const response = await fetch(`/api/rooms/${roomId}`)

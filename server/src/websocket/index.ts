@@ -157,35 +157,39 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
               isTemporary: true,
             });
 
-            const hasPlayedBefore = room.players.some(p =>
-              p.playerRoomRole === PlayerRoomRole.ACTIVE || p.playerRoomRole === PlayerRoomRole.BUSTED
-            );
-            if (hasPlayedBefore && room.status !== RoomStatus.PLAYING) {
-              const disconnectedPlayerId = playerId;
-              setTimeout(() => {
-                const currentRoom = roomManager.getRoom(roomId);
-                if (!currentRoom || currentRoom.status === RoomStatus.PLAYING) return;
+            const disconnectedPlayerId = playerId;
+            setTimeout(() => {
+              const currentRoom = roomManager.getRoom(roomId);
+              if (!currentRoom) return;
+              if (currentRoom.status === RoomStatus.PLAYING) {
                 const dp = currentRoom.players.find(p => p.id === disconnectedPlayerId);
                 if (dp && !dp.isOnline && dp.disconnectedAt) {
-                  if (dp.playerRoomRole === PlayerRoomRole.SPECTATOR
-                    || dp.playerRoomRole === PlayerRoomRole.SEATED
-                    || dp.playerRoomRole === PlayerRoomRole.BUSTED
-                    || (dp.playerRoomRole === PlayerRoomRole.ACTIVE && currentRoom.status === RoomStatus.WAITING)) {
-                    roomManager.leaveRoom(disconnectedPlayerId, true);
-                    io.to(roomId).emit(ServerEvents.PLAYER_LEFT, {
-                      playerId: disconnectedPlayerId,
-                      room: sanitizeRoom(currentRoom),
-                    });
-                    io.emit(ServerEvents.ROOM_UPDATED, {
-                      type: 'updated',
-                      room: sanitizeRoom(currentRoom),
-                    });
-                  } else {
-                    tryStartGame(roomId, roomManager, io);
-                  }
+                  dp.isOnline = true;
+                  dp.disconnectedAt = undefined;
                 }
-              }, 31000);
-            }
+                return;
+              }
+              const dp = currentRoom.players.find(p => p.id === disconnectedPlayerId);
+              if (dp && !dp.isOnline && dp.disconnectedAt) {
+                roomManager.leaveRoom(disconnectedPlayerId, true);
+                const updatedRoom = roomManager.getRoom(roomId);
+                if (updatedRoom) {
+                  io.to(roomId).emit(ServerEvents.PLAYER_LEFT, {
+                    playerId: disconnectedPlayerId,
+                    room: sanitizeRoom(updatedRoom),
+                  });
+                  io.emit(ServerEvents.ROOM_UPDATED, {
+                    type: 'updated',
+                    room: sanitizeRoom(updatedRoom),
+                  });
+                } else {
+                  io.emit(ServerEvents.ROOM_UPDATED, {
+                    type: 'deleted',
+                    roomId,
+                  });
+                }
+              }
+            }, 31000);
           }
         }
       }

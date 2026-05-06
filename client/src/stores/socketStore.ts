@@ -22,18 +22,18 @@ const PLAYER_ID_KEY = 'poker_player_id'
 
 function savePlayerId(id: string) {
   try {
+    localStorage.setItem(PLAYER_ID_KEY, id)
     sessionStorage.setItem(PLAYER_ID_KEY, id)
   } catch {}
 }
 
 function loadPlayerId(): string | null {
   try {
-    return sessionStorage.getItem(PLAYER_ID_KEY)
+    return localStorage.getItem(PLAYER_ID_KEY) || sessionStorage.getItem(PLAYER_ID_KEY)
   } catch {
     return null
   }
 }
-
 
 function rebindListeners(socket: Socket) {
   for (const { event, callback } of registeredListeners) {
@@ -99,7 +99,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
       const pid = data.playerId || savedPlayerId
       set({ playerId: pid })
       savePlayerId(pid)
-      console.log('Connected with playerId:', pid)
+      console.log('Connected with playerId:', pid, 'isReconnection:', data.message === '重新连接成功')
     })
 
     socket.on('error', (error) => {

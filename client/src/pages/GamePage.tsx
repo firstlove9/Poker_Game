@@ -456,6 +456,12 @@ export default function GamePage() {
     }
   }, [roomId, myPlayerId])
 
+  useEffect(() => {
+    if (isConnected && roomId) {
+      fetchGameState()
+    }
+  }, [isConnected])
+
   const fetchGameState = async () => {
     try {
       const response = await fetch(`/api/rooms/${roomId}`)
