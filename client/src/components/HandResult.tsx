@@ -52,6 +52,7 @@ export default function HandResult({ winners, onNextHand }: HandResultProps) {
             <p className="text-white/40 text-sm mb-3">{mainWinner.handDescription}</p>
             
             {/* 手牌展示 */}
+            {mainWinner.holeCards && mainWinner.holeCards.length > 0 ? (
             <div className="flex gap-4 items-center">
               <div>
                 <p className="text-white/40 text-xs mb-1">底牌</p>
@@ -71,6 +72,11 @@ export default function HandResult({ winners, onNextHand }: HandResultProps) {
                 </div>
               </div>
             </div>
+            ) : (
+            <div className="text-white/40 text-sm italic">
+              其他玩家弃牌
+            </div>
+            )}
           </div>
         </div>
 

@@ -1128,8 +1128,8 @@ export class GameEngine {
         potType: 'main',
         handRank: 'win',
         handDescription: '其他玩家弃牌',
-        winningCards: this.state.playerCards[winner.id] || [],
-        holeCards: this.state.playerCards[winner.id] || [],
+        winningCards: [],
+        holeCards: [],
         explanation: `${winner.name}获胜，其他玩家弃牌`,
       });
       potResults.push({
@@ -1142,7 +1142,7 @@ export class GameEngine {
       allHands.push({
         playerId: winner.id,
         playerName: winner.name,
-        holeCards: this.state.playerCards[winner.id] || [],
+        holeCards: [],
         handRank: 'win',
         handDescription: '其他玩家弃牌',
         isWinner: true,
