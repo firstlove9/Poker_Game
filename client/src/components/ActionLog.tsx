@@ -10,6 +10,7 @@ export interface ActionLogEntry {
 }
 
 export interface HandResultPlayer {
+  playerId: string
   playerName: string
   isWinner: boolean
   winAmount?: number
@@ -17,11 +18,20 @@ export interface HandResultPlayer {
   handRank: string
 }
 
+export interface RunItTwiceRoundInfo {
+  communityCards: string
+  winnerIds: string[]
+  winAmount: number
+  handRanks: Record<string, string>
+}
+
 export interface HandResultEntry {
   id: string
   players: HandResultPlayer[]
   communityCards: string
   timestamp: number
+  isRunItTwice?: boolean
+  runItTwiceRounds?: RunItTwiceRoundInfo[]
 }
 
 interface ActionLogProps {
@@ -221,28 +231,81 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
           ) : (
             handResults.map((result) => (
               <div key={result.id} className="py-1.5 px-2 rounded border bg-white/5 border-white/10">
-                {result.communityCards && (
-                  <div className="text-[11px] mb-1 flex items-center gap-0.5">
-                    <span className="text-white/40">公共牌:</span>
-                    {renderCommunityCards(result.communityCards)}
-                  </div>
-                )}
-                <div className="space-y-0.5">
-                  {result.players.map((p, pi) => (
-                    <div key={pi} className="flex items-center gap-1 flex-wrap">
-                      <span className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>
-                        {p.isWinner ? '🏆' : '  '} {p.playerName}
-                      </span>
-                      {p.isWinner && p.winAmount !== undefined && p.winAmount > 0 && (
-                        <span className="text-yellow-300 font-bold">+${p.winAmount}</span>
-                      )}
-                      {p.holeCards && (
-                        <span className="font-mono text-[11px]">{renderCards(p.holeCards)}</span>
-                      )}
-                      <span className="text-sm" title={p.handRank}>{HAND_RANK_ICONS[p.handRank] || '🃏'}</span>
+                {result.isRunItTwice && result.runItTwiceRounds ? (
+                  <>
+                    {result.runItTwiceRounds.map((round, ri) => (
+                      <div key={ri} className="mb-1">
+                        <div className="text-[10px] text-purple-300 font-bold mb-0.5">第{ri + 1}轮</div>
+                        {round.communityCards && (
+                          <div className="text-[11px] mb-0.5 flex items-center gap-0.5">
+                            <span className="text-white/40">公共牌:</span>
+                            {renderCommunityCards(round.communityCards)}
+                          </div>
+                        )}
+                        <div className="space-y-0.5">
+                          {result.players.map((p, pi) => {
+                            const isRoundWinner = round.winnerIds.includes(p.playerId)
+                            const rank = round.handRanks[p.playerId] || ''
+                            return (
+                              <div key={pi} className="flex items-center gap-1 flex-wrap">
+                                <span className={`font-medium ${isRoundWinner ? 'text-green-400' : 'text-white/60'}`}>
+                                  {isRoundWinner ? '🏆' : '  '} {p.playerName}
+                                </span>
+                                {isRoundWinner && (
+                                  <span className="text-yellow-300 font-bold text-[11px]">+${round.winAmount}</span>
+                                )}
+                                {rank && (
+                                  <span className="text-[10px] text-white/50">{rank}</span>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                    <div className="border-t border-white/10 pt-0.5 mt-0.5">
+                      <div className="text-[10px] text-white/40 font-bold mb-0.5">总计</div>
+                      {result.players.map((p, pi) => (
+                        <div key={pi} className="flex items-center gap-1 flex-wrap">
+                          <span className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>
+                            {p.isWinner ? '🏆' : '  '} {p.playerName}
+                          </span>
+                          {p.isWinner && p.winAmount !== undefined && p.winAmount > 0 && (
+                            <span className="text-yellow-300 font-bold">+${p.winAmount}</span>
+                          )}
+                          {p.holeCards && (
+                            <span className="font-mono text-[11px]">{renderCards(p.holeCards)}</span>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </>
+                ) : (
+                  <>
+                    {result.communityCards && (
+                      <div className="text-[11px] mb-1 flex items-center gap-0.5">
+                        <span className="text-white/40">公共牌:</span>
+                        {renderCommunityCards(result.communityCards)}
+                      </div>
+                    )}
+                    <div className="space-y-0.5">
+                      {result.players.map((p, pi) => (
+                        <div key={pi} className="flex items-center gap-1 flex-wrap">
+                          <span className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>
+                            {p.isWinner ? '🏆' : '  '} {p.playerName}
+                          </span>
+                          {p.isWinner && p.winAmount !== undefined && p.winAmount > 0 && (
+                            <span className="text-yellow-300 font-bold">+${p.winAmount}</span>
+                          )}
+                          {p.holeCards && (
+                            <span className="font-mono text-[11px]">{renderCards(p.holeCards)}</span>
+                          )}
+                          <span className="text-sm" title={p.handRank}>{HAND_RANK_ICONS[p.handRank] || '🃏'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             ))
           )

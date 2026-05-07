@@ -405,9 +405,16 @@ export class RoomManager {
       initiatorName: player.name,
       votes: new Map(),
       approved: false,
+      createdAt: Date.now(),
     };
 
     room.voteLeave.votes.set(playerId, true);
+
+    for (const p of room.players) {
+      if (p.id !== playerId && !p.isOnline) {
+        room.voteLeave.votes.set(p.id, true);
+      }
+    }
 
     if (room.voteLeave.votes.size === room.players.length) {
       room.voteLeave.approved = true;
@@ -446,8 +453,16 @@ export class RoomManager {
       return { success: true, room, approved: false, roomId, voteCounts: { approveCount, rejectCount }, initiatorId };
     }
 
-    const allVoted = room.players.every(p => room.voteLeave!.votes.has(p.id));
+    const allVoted = room.players.every(p =>
+      room.voteLeave!.votes.has(p.id) || !p.isOnline
+    );
     if (allVoted) {
+      for (const p of room.players) {
+        if (!room.voteLeave!.votes.has(p.id) && !p.isOnline) {
+          room.voteLeave.votes.set(p.id, true);
+        }
+      }
+
       const approveCount = Array.from(room.voteLeave.votes.values()).filter(v => v).length;
       const rejectCount = Array.from(room.voteLeave.votes.values()).filter(v => !v).length;
       room.voteLeave.approved = approveCount === room.players.length;
@@ -487,5 +502,42 @@ export class RoomManager {
       totalPlayers: room.players.length,
       votedPlayers: room.voteLeave.votes.size,
     };
+  }
+
+  processVoteTimeout(roomId: string): { success: boolean; room?: Room; approved?: boolean; roomId?: string; voteCounts?: { approveCount: number; rejectCount: number } } {
+    const room = this.rooms.get(roomId);
+    if (!room || !room.voteLeave) {
+      return { success: false };
+    }
+
+    if (Date.now() - room.voteLeave.createdAt < 15000) {
+      return { success: false };
+    }
+
+    for (const p of room.players) {
+      if (!room.voteLeave.votes.has(p.id)) {
+        room.voteLeave.votes.set(p.id, true);
+      }
+    }
+
+    const approveCount = Array.from(room.voteLeave.votes.values()).filter(v => v).length;
+    const rejectCount = Array.from(room.voteLeave.votes.values()).filter(v => !v).length;
+    room.voteLeave.approved = approveCount === room.players.length;
+
+    if (room.voteLeave.approved) {
+      for (const p of room.players) {
+        this.playerRooms.delete(p.id);
+      }
+      this.rooms.delete(roomId);
+      return { success: true, room, approved: true, roomId, voteCounts: { approveCount, rejectCount } };
+    } else {
+      const initiatorId = room.voteLeave.initiatorId;
+      room.voteLeave = undefined;
+      if (!room.voteLeaveCooldowns) {
+        room.voteLeaveCooldowns = new Map();
+      }
+      room.voteLeaveCooldowns.set(initiatorId, Date.now() + 10000);
+      return { success: true, room, approved: false, roomId, voteCounts: { approveCount, rejectCount } };
+    }
   }
 }

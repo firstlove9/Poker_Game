@@ -354,6 +354,11 @@ export class GameEngine {
 
   private enterRunItTwiceChoice(): void {
     this.collectBets();
+    this.hasActedThisRound = new Set();
+    this.lastAggressorIndex = -1;
+    this.state.currentBet = 0;
+    this.state.roundBets = {};
+    this.actionCount = 0;
     this.state.totalPot = this.calcTotalPot();
     this.state.isHeadsUpAllIn = true;
     this.state.phase = GamePhase.RUN_IT_TWICE_CHOICE;

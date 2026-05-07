@@ -404,6 +404,7 @@ export default function GamePage() {
             ? h.holeCards.map((c: Card) => `${c.rank}${c.suit}`).join(' ')
             : ''
           return {
+            playerId: h.playerId,
             playerName: h.playerName,
             isWinner: h.isWinner,
             winAmount: h.isWinner ? h.winAmount : undefined,
@@ -411,11 +412,25 @@ export default function GamePage() {
             handRank: h.handRank || '',
           }
         })
+        const isRunItTwice = !!(data.runItTwiceBoard && data.runItTwiceBoard.length > 1)
+        const runItTwiceRounds = isRunItTwice
+          ? data.runItTwiceBoard.map((board: any[], roundIdx: number) => {
+              const roundResult = data.runItTwiceResults?.[roundIdx]
+              return {
+                communityCards: board.map((c: Card) => `${c.rank}${c.suit}`).join(' '),
+                winnerIds: roundResult?.winnerIds || [],
+                winAmount: roundResult?.winAmount || 0,
+                handRanks: roundResult?.handRanks || {},
+              }
+            })
+          : undefined
         setHandResults(prev => [...prev, {
           id: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           players,
           communityCards: communityStr,
           timestamp: Date.now(),
+          isRunItTwice,
+          runItTwiceRounds,
         }])
       }
     }
@@ -1240,16 +1255,22 @@ export default function GamePage() {
                     Min
                   </button>
                   <button
-                    onClick={() => setRaiseAmount(Math.floor(maxRaise / 2))}
+                    onClick={() => setRaiseAmount(Math.max(minRaise, Math.floor(totalPot / 2)))}
                     className="px-1.5 md:px-2 py-0.5 md:py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
                   >
                     1/2
                   </button>
                   <button
-                    onClick={() => setRaiseAmount(maxRaise)}
+                    onClick={() => setRaiseAmount(Math.max(minRaise, totalPot))}
                     className="px-1.5 md:px-2 py-0.5 md:py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
                   >
-                    Max
+                    满池
+                  </button>
+                  <button
+                    onClick={() => setRaiseAmount(myChips)}
+                    className="px-1.5 md:px-2 py-0.5 md:py-1 bg-purple-600/40 rounded text-white/80 text-[10px] md:text-xs hover:bg-purple-600/60"
+                  >
+                    All-in
                   </button>
                 </div>
                 <button

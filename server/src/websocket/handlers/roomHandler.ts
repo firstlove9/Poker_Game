@@ -542,6 +542,41 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
               totalPlayers: result.room.players.length,
               votedPlayers: result.room.voteLeave?.votes?.size || 0,
             });
+
+            setTimeout(() => {
+              const timeoutResult = roomManager.processVoteTimeout(roomId!);
+              if (timeoutResult.success) {
+                if (timeoutResult.approved) {
+                  gameEngines.delete(roomId!);
+                  cleanupRoomLogs(roomId!);
+                  io.to(roomId!).emit(ServerEvents.VOTE_LEAVE_ENDED, {
+                    approved: true,
+                    approvedCount: timeoutResult.voteCounts!.approveCount,
+                    totalPlayers: timeoutResult.voteCounts!.approveCount + timeoutResult.voteCounts!.rejectCount,
+                  });
+                  io.to(roomId!).emit(ServerEvents.ROOM_LEFT, {
+                    reason: 'vote',
+                  });
+                  io.emit(ServerEvents.ROOM_UPDATED, {
+                    type: 'deleted',
+                    roomId: roomId!,
+                  });
+                } else {
+                  io.to(roomId!).emit(ServerEvents.VOTE_LEAVE_ENDED, {
+                    approved: false,
+                    approvedCount: timeoutResult.voteCounts!.approveCount,
+                    totalPlayers: timeoutResult.voteCounts!.approveCount + timeoutResult.voteCounts!.rejectCount,
+                  });
+                  const updatedRoom = roomManager.getRoom(roomId!);
+                  if (updatedRoom) {
+                    io.to(roomId!).emit(ServerEvents.ROOM_UPDATED, {
+                      type: 'updated',
+                      room: sanitizeRoom(updatedRoom),
+                    });
+                  }
+                }
+              }
+            }, 15000);
           }
         }
         safeCallback(callback, { success: true });
@@ -574,7 +609,7 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
             votedPlayers: result.room.voteLeave?.votes?.size || 0,
           });
 
-          if (result.room.voteLeave && result.room.players.every(p => result.room!.voteLeave!.votes.has(p.id))) {
+          if (result.room.voteLeave && result.room.players.every(p => result.room!.voteLeave!.votes.has(p.id) || !p.isOnline)) {
             io.to(roomId).emit(ServerEvents.VOTE_LEAVE_ENDED, {
               approved: result.approved,
               approvedCount: Array.from(result.room.voteLeave.votes.values()).filter(v => v).length,

@@ -84,6 +84,7 @@ export interface Room {
     initiatorName: string;
     votes: Map<string, boolean>;
     approved: boolean;
+    createdAt: number;
   };
   voteLeaveCooldowns?: Map<string, number>;
 }
