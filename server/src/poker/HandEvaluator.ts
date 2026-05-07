@@ -24,8 +24,9 @@ export class HandEvaluator {
     let bestValue = 0;
 
     for (const combo of combinations) {
-      const { rank, value } = this.evaluateFiveCards(combo, rankOrder);
-      if (rank > bestRank || (rank === bestRank && value > bestValue)) {
+      const { rank, value } = this.evaluateFiveCards(combo);
+      const cmp = this.compareRankValue(rank, value, bestRank, bestValue, rankOrder);
+      if (cmp > 0) {
         bestRank = rank;
         bestValue = value;
         bestHand = combo;
@@ -75,8 +76,9 @@ export class HandEvaluator {
     for (const hc of holeCombos) {
       for (const cc of communityCombos) {
         const combo = [...hc, ...cc];
-        const { rank, value } = this.evaluateFiveCards(combo, rankOrder);
-        if (rank > bestRank || (rank === bestRank && value > bestValue)) {
+        const { rank, value } = this.evaluateFiveCards(combo);
+        const cmp = this.compareRankValue(rank, value, bestRank, bestValue, rankOrder);
+        if (cmp > 0) {
           bestRank = rank;
           bestValue = value;
           bestHand = combo;
@@ -116,8 +118,9 @@ export class HandEvaluator {
     let bestValue = 0;
 
     for (const combo of combinations) {
-      const { rank, value } = this.evaluateFiveCards(combo, rankOrder);
-      if (rank > bestRank || (rank === bestRank && value > bestValue)) {
+      const { rank, value } = this.evaluateFiveCards(combo);
+      const cmp = this.compareRankValue(rank, value, bestRank, bestValue, rankOrder);
+      if (cmp > 0) {
         bestRank = rank;
         bestValue = value;
         bestHand = combo;
@@ -142,7 +145,7 @@ export class HandEvaluator {
     };
   }
 
-  private static evaluateFiveCards(cards: Card[], rankOrder: HandRank[]): { rank: HandRank; value: number } {
+  private static evaluateFiveCards(cards: Card[]): { rank: HandRank; value: number } {
     const isFlush = this.isFlush(cards);
     const isStraight = this.isStraight(cards);
     const isWheelStraight = this.isWheelStraight(cards);
@@ -152,35 +155,35 @@ export class HandEvaluator {
     if (isFlush && (isStraight || isWheelStraight)) {
       if (isWheelStraight) {
         return {
-          rank: this.mapRank(HandRank.STRAIGHT_FLUSH, rankOrder),
+          rank: HandRank.STRAIGHT_FLUSH,
           value: this.calculateValue([5, 4, 3, 2, 1]),
         };
       }
       const isRoyal = sortedRanks[0] === 14 && sortedRanks[4] === 10;
       const baseRank = isRoyal ? HandRank.ROYAL_FLUSH : HandRank.STRAIGHT_FLUSH;
       return {
-        rank: this.mapRank(baseRank, rankOrder),
+        rank: baseRank,
         value: this.calculateValue(sortedRanks),
       };
     }
 
     if (counts.includes(4)) {
       return {
-        rank: this.mapRank(HandRank.FOUR_OF_A_KIND, rankOrder),
+        rank: HandRank.FOUR_OF_A_KIND,
         value: this.calculateValueWithCounts(sortedRanks, counts, 4),
       };
     }
 
     if (counts.includes(3) && counts.includes(2)) {
       return {
-        rank: this.mapRank(HandRank.FULL_HOUSE, rankOrder),
+        rank: HandRank.FULL_HOUSE,
         value: this.calculateValueWithCounts(sortedRanks, counts, 3, 2),
       };
     }
 
     if (isFlush) {
       return {
-        rank: this.mapRank(HandRank.FLUSH, rankOrder),
+        rank: HandRank.FLUSH,
         value: this.calculateValue(sortedRanks),
       };
     }
@@ -188,47 +191,56 @@ export class HandEvaluator {
     if (isStraight || isWheelStraight) {
       if (isWheelStraight) {
         return {
-          rank: this.mapRank(HandRank.STRAIGHT, rankOrder),
+          rank: HandRank.STRAIGHT,
           value: this.calculateValue([5, 4, 3, 2, 1]),
         };
       }
       return {
-        rank: this.mapRank(HandRank.STRAIGHT, rankOrder),
+        rank: HandRank.STRAIGHT,
         value: this.calculateValue(sortedRanks),
       };
     }
 
     if (counts.includes(3)) {
       return {
-        rank: this.mapRank(HandRank.THREE_OF_A_KIND, rankOrder),
+        rank: HandRank.THREE_OF_A_KIND,
         value: this.calculateValueWithCounts(sortedRanks, counts, 3),
       };
     }
 
     if (counts.filter(c => c === 2).length === 2) {
       return {
-        rank: this.mapRank(HandRank.TWO_PAIR, rankOrder),
+        rank: HandRank.TWO_PAIR,
         value: this.calculateValueWithCounts(sortedRanks, counts, 2),
       };
     }
 
     if (counts.includes(2)) {
       return {
-        rank: this.mapRank(HandRank.ONE_PAIR, rankOrder),
+        rank: HandRank.ONE_PAIR,
         value: this.calculateValueWithCounts(sortedRanks, counts, 2),
       };
     }
 
     return {
-      rank: this.mapRank(HandRank.HIGH_CARD, rankOrder),
+      rank: HandRank.HIGH_CARD,
       value: this.calculateValue(sortedRanks),
     };
   }
 
-  private static mapRank(baseRank: HandRank, rankOrder: HandRank[]): HandRank {
-    const idx = rankOrder.indexOf(baseRank);
-    if (idx === -1) return baseRank;
-    return (rankOrder.length - idx) as HandRank;
+  private static compareRankValue(
+    rank1: HandRank, value1: number,
+    rank2: HandRank, value2: number,
+    rankOrder: HandRank[]
+  ): number {
+    const idx1 = rankOrder.indexOf(rank1);
+    const idx2 = rankOrder.indexOf(rank2);
+    const order1 = idx1 === -1 ? rank1 : idx1;
+    const order2 = idx2 === -1 ? rank2 : idx2;
+    if (order1 !== order2) {
+      return order2 - order1;
+    }
+    return value1 - value2;
   }
 
   private static isFlush(cards: Card[]): boolean {
@@ -415,9 +427,19 @@ export class HandEvaluator {
     }
   }
 
-  static compareHands(hand1: HandEvaluation, hand2: HandEvaluation): number {
-    if (hand1.rank !== hand2.rank) {
-      return hand1.rank - hand2.rank;
+  static compareHands(hand1: HandEvaluation, hand2: HandEvaluation, rankOrder?: HandRank[]): number {
+    if (rankOrder) {
+      const idx1 = rankOrder.indexOf(hand1.rank);
+      const idx2 = rankOrder.indexOf(hand2.rank);
+      const order1 = idx1 === -1 ? hand1.rank : idx1;
+      const order2 = idx2 === -1 ? hand2.rank : idx2;
+      if (order1 !== order2) {
+        return order2 - order1;
+      }
+    } else {
+      if (hand1.rank !== hand2.rank) {
+        return hand2.rank - hand1.rank;
+      }
     }
     return hand1.value - hand2.value;
   }

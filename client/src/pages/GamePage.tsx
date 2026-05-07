@@ -290,6 +290,12 @@ export default function GamePage() {
       if (data.gameState) {
         setGameState(data.gameState)
       }
+      const myStatus = myPlayerId ? data.gameState?.playerStatus?.[myPlayerId] : undefined
+      if (myStatus === 'folded') {
+        setShowRunItTwiceDialog(false)
+        setShowDiceDialog(false)
+        return
+      }
       setShowRunItTwiceDialog(true)
       setRunItTwiceMyChoice(null)
       setRunItTwiceOtherChoice(null)
@@ -316,6 +322,11 @@ export default function GamePage() {
     const handleRunItTwiceDiceResult = (data: any) => {
       if (data.gameState) {
         setGameState(data.gameState)
+      }
+      const myStatus = myPlayerId ? data.gameState?.playerStatus?.[myPlayerId] : undefined
+      if (myStatus === 'folded') {
+        setShowDiceDialog(false)
+        return
       }
       if (data.reroll) {
         setDiceResult(null)

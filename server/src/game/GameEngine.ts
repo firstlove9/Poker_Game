@@ -582,11 +582,10 @@ export class GameEngine {
         if (!handData) continue;
         const hand = handData.hand;
 
-        if (!bestHand || hand.rank > bestHand.rank ||
-          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+        if (!bestHand || HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) > 0) {
           bestHand = hand;
           winnerIds = [player.id];
-        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+        } else if (HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) === 0) {
           winnerIds.push(player.id);
         }
       }
@@ -714,7 +713,7 @@ export class GameEngine {
       allHands.push({
         playerId: fp.id,
         playerName: fp.name,
-        holeCards: this.state.playerCards[fp.id] || [],
+        holeCards: [],
         handRank: '弃牌',
         handDescription: '弃牌',
         isWinner: false,
@@ -1028,11 +1027,10 @@ export class GameEngine {
         if (!handData) continue;
         const hand = handData.hand;
 
-        if (!bestHand || hand.rank > bestHand.rank ||
-          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+        if (!bestHand || HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) > 0) {
           bestHand = hand;
           potWinnerIds = [player.id];
-        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+        } else if (HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) === 0) {
           potWinnerIds.push(player.id);
         }
       }
@@ -1084,11 +1082,10 @@ export class GameEngine {
         const hand = playerHands.get(player.id);
         if (!hand) continue;
 
-        if (!bestHand || hand.rank > bestHand.rank ||
-          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+        if (!bestHand || HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) > 0) {
           bestHand = hand;
           winnerIds = [player.id];
-        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+        } else if (HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) === 0) {
           winnerIds.push(player.id);
         }
       }
@@ -1160,7 +1157,7 @@ export class GameEngine {
         allHands.push({
           playerId: fp.id,
           playerName: fp.name,
-          holeCards: this.state.playerCards[fp.id] || [],
+          holeCards: [],
           handRank: '弃牌',
           handDescription: '弃牌',
           isWinner: false,
@@ -1232,11 +1229,10 @@ export class GameEngine {
         if (!handData) continue;
         const hand = handData.hand;
 
-        if (!bestHand || hand.rank > bestHand.rank ||
-          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+        if (!bestHand || HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) > 0) {
           bestHand = hand;
           potWinnerIds = [player.id];
-        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+        } else if (HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) === 0) {
           potWinnerIds.push(player.id);
         }
       }
@@ -1328,7 +1324,7 @@ export class GameEngine {
       allHands.push({
         playerId: fp.id,
         playerName: fp.name,
-        holeCards: this.state.playerCards[fp.id] || [],
+        holeCards: [],
         handRank: '弃牌',
         handDescription: '弃牌',
         isWinner: false,
@@ -1402,7 +1398,7 @@ export class GameEngine {
             hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
           }
           playerHands.set(player.id, hand);
-          if (!playerBestHand.has(player.id) || hand.rank > playerBestHand.get(player.id)!.rank) {
+          if (!playerBestHand.has(player.id) || HandEvaluator.compareHands(hand, playerBestHand.get(player.id)!, this.variantRules.handRankOrder) > 0) {
             playerBestHand.set(player.id, hand);
           }
         }
@@ -1415,11 +1411,10 @@ export class GameEngine {
         const hand = playerHands.get(player.id);
         if (!hand) continue;
 
-        if (!bestHand || hand.rank > bestHand.rank ||
-          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+        if (!bestHand || HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) > 0) {
           bestHand = hand;
           winnerIds = [player.id];
-        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+        } else if (HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) === 0) {
           winnerIds.push(player.id);
         }
       }
@@ -1484,7 +1479,7 @@ export class GameEngine {
       allHands.push({
         playerId: fp.id,
         playerName: fp.name,
-        holeCards: this.state.playerCards[fp.id] || [],
+        holeCards: [],
         handRank: '弃牌',
         handDescription: '弃牌',
         isWinner: false,

@@ -646,11 +646,10 @@ export class SinglePlayerGameEngine {
         if (!handData) continue;
         const hand = handData.hand;
 
-        if (!bestHand || hand.rank > bestHand.rank ||
-          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+        if (!bestHand || HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) > 0) {
           bestHand = hand;
           potWinnerIds = [player.id];
-        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+        } else if (HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) === 0) {
           potWinnerIds.push(player.id);
         }
       }
@@ -718,7 +717,7 @@ export class SinglePlayerGameEngine {
         allHands.push({
           playerId: fp.id,
           playerName: fp.name,
-          holeCards: this.state.playerCards[fp.id] || [],
+          holeCards: [],
           handRank: '弃牌',
           handDescription: '弃牌',
           isWinner: false,
@@ -780,11 +779,10 @@ export class SinglePlayerGameEngine {
         if (!handData) continue;
         const hand = handData.hand;
 
-        if (!bestHand || hand.rank > bestHand.rank ||
-          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+        if (!bestHand || HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) > 0) {
           bestHand = hand;
           potWinnerIds = [player.id];
-        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+        } else if (HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) === 0) {
           potWinnerIds.push(player.id);
         }
       }
@@ -812,11 +810,10 @@ export class SinglePlayerGameEngine {
         const handData = playerHands.get(player.id);
         if (!handData) continue;
         const hand = handData.hand;
-        if (!bestHand || hand.rank > bestHand.rank ||
-          (hand.rank === bestHand.rank && hand.value > bestHand.value)) {
+        if (!bestHand || HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) > 0) {
           bestHand = hand;
           potWinnerIds = [player.id];
-        } else if (hand.rank === bestHand.rank && hand.value === bestHand.value) {
+        } else if (HandEvaluator.compareHands(hand, bestHand, this.variantRules.handRankOrder) === 0) {
           potWinnerIds.push(player.id);
         }
       }
@@ -873,7 +870,7 @@ export class SinglePlayerGameEngine {
       allHands.push({
         playerId: fp.id,
         playerName: fp.name,
-        holeCards: this.state.playerCards[fp.id] || [],
+        holeCards: [],
         handRank: '弃牌',
         handDescription: '弃牌',
         isWinner: false,
