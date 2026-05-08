@@ -53,6 +53,7 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
   room.gameState = gameEngine.start();
 
   syncPlayerChipsToRoom(gameEngine, room);
+  roomManager.syncScoreboard(roomId);
 
   for (const player of room.players) {
     const cards = gameEngine.getPlayerCards(player.id);
@@ -385,6 +386,8 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
             }
           }
 
+          roomManager.syncScoreboard(roomId);
+
           io.to(roomId).emit(ServerEvents.CHIPS_RECEIVED, {
             playerId,
             amount: result.amount,
@@ -704,7 +707,7 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
                       handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
                     }
                   } else {
-                    finishHandFromAfk(roomId, room, gameEngine, io);
+                    finishHandFromAfk(roomId, room, gameEngine, io, roomManager);
                   }
                 }
               }
@@ -755,6 +758,7 @@ function sanitizeRoom(room: any): any {
       hasPlayedHand: p.hasPlayedHand,
       playerRoomRole: p.playerRoomRole,
     })),
+    scoreboardEntries: room.scoreboardEntries || [],
   };
 }
 
@@ -801,14 +805,14 @@ export function handlePlayerTurnWithAfk(roomId: string, room: any, gameEngine: G
             handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
           }
         } else {
-          finishHandFromAfk(roomId, room, gameEngine, io);
+          finishHandFromAfk(roomId, room, gameEngine, io, roomManager);
         }
       }
     }, 1500);
   }
 }
 
-function finishHandFromAfk(roomId: string, room: any, gameEngine: GameEngine, io: Server): void {
+function finishHandFromAfk(roomId: string, room: any, gameEngine: GameEngine, io: Server, roomManager: RoomManager): void {
   const { winners, potResults, allHands } = gameEngine.showdown();
   const finalGameState = gameEngine.getState();
   room.gameState = finalGameState;
@@ -862,6 +866,8 @@ function finishHandFromAfk(roomId: string, room: any, gameEngine: GameEngine, io
       p.playerRoomRole = PlayerRoomRole.BUSTED;
     }
   }
+
+  roomManager.syncScoreboard(roomId);
 
   const isRunItTwice = finalGameState.runItTwiceResults && finalGameState.runItTwiceResults.length > 0;
 

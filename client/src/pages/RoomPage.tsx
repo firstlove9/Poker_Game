@@ -387,7 +387,7 @@ export default function RoomPage() {
       </div>
 
       {/* 底部操作栏 */}
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto mt-48 md:mt-0">
         <div className="glass-panel p-4">
           <div className="flex flex-wrap justify-center gap-4">
             {isSpectator ? (

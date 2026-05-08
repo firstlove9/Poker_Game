@@ -39,6 +39,7 @@ function sanitizeRoom(room: any): any {
       isAfk: p.isAfk,
       playerRoomRole: p.playerRoomRole,
     })),
+    scoreboardEntries: room.scoreboardEntries || [],
   };
 }
 

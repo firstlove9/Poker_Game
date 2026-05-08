@@ -75,6 +75,7 @@ export class RoomManager {
       config,
       status: RoomStatus.WAITING,
       players: [],
+      scoreboardEntries: [],
       spectators: [],
     };
 
@@ -173,6 +174,7 @@ export class RoomManager {
 
     room.players.push(player);
     this.playerRooms.set(playerId, roomId);
+    this.syncScoreboard(roomId);
 
     return { success: true, room };
   }
@@ -210,8 +212,26 @@ export class RoomManager {
       }
     }
 
+    const leavingPlayer = room.players.find(p => p.id === playerId);
     room.players = room.players.filter(p => p.id !== playerId);
     this.playerRooms.delete(playerId);
+
+    if (leavingPlayer) {
+      const existingEntry = room.scoreboardEntries.find(e => e.id === playerId);
+      if (existingEntry) {
+        existingEntry.chips = leavingPlayer.chips;
+        existingEntry.totalBuyIn = leavingPlayer.totalBuyIn;
+        existingEntry.leftAt = Date.now();
+      } else {
+        room.scoreboardEntries.push({
+          id: leavingPlayer.id,
+          name: leavingPlayer.name,
+          chips: leavingPlayer.chips,
+          totalBuyIn: leavingPlayer.totalBuyIn,
+          leftAt: Date.now(),
+        });
+      }
+    }
 
     if (room.players.length === 0) {
       this.rooms.delete(roomId);
@@ -570,5 +590,26 @@ export class RoomManager {
     }
 
     return { success: true, room, roomId };
+  }
+
+  syncScoreboard(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+
+    for (const p of room.players) {
+      const existingEntry = room.scoreboardEntries.find(e => e.id === p.id);
+      if (existingEntry) {
+        existingEntry.chips = p.chips;
+        existingEntry.totalBuyIn = p.totalBuyIn;
+        existingEntry.leftAt = undefined;
+      } else {
+        room.scoreboardEntries.push({
+          id: p.id,
+          name: p.name,
+          chips: p.chips,
+          totalBuyIn: p.totalBuyIn,
+        });
+      }
+    }
   }
 }

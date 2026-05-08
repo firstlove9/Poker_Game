@@ -75,10 +75,19 @@ export interface RoomPlayer {
   playerRoomRole: PlayerRoomRole;
 }
 
+export interface ScoreboardEntry {
+  id: string;
+  name: string;
+  chips: number;
+  totalBuyIn: number;
+  leftAt?: number;
+}
+
 export interface Room {
   config: RoomConfig;
   status: RoomStatus;
   players: RoomPlayer[];
+  scoreboardEntries: ScoreboardEntry[];
   gameState?: GameState;
   spectators: string[];
   voteLeave?: {

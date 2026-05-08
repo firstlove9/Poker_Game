@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useSocketStore } from '../stores/socketStore'
 import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
-import { ClientEvents, ServerEvents, Card, PlayerHandInfo, RunItTwiceChoice, RunItTwiceDiceResult, RunItTwiceRoundResult, GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO } from '../types'
+import { ClientEvents, ServerEvents, Card, PlayerHandInfo, RunItTwiceChoice, RunItTwiceDiceResult, RunItTwiceRoundResult, GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO, ScoreboardEntry } from '../types'
 import ChatBox from '../components/ChatBox'
 import ActionLog, { ActionLogEntry, HandResultEntry } from '../components/ActionLog'
 import { HelpCircle, X } from 'lucide-react'
@@ -1907,20 +1907,21 @@ export default function GamePage() {
               </div>
 
               <div className="space-y-1.5 md:space-y-2">
-                {[...players]
-                  .sort((a, b) => b.chips - a.chips)
-                  .map((p, idx) => {
+                {(currentRoom?.scoreboardEntries || [...players] as ScoreboardEntry[])
+                  .sort((a: ScoreboardEntry, b: ScoreboardEntry) => b.chips - a.chips)
+                  .map((p: ScoreboardEntry, idx: number) => {
                     const profit = p.chips - (p.totalBuyIn || initialChips)
                     const rebuyCount = Math.max(0, Math.floor(((p.totalBuyIn || initialChips) - initialChips) / initialChips))
+                    const hasLeft = !!p.leftAt
                     return (
                       <div key={p.id} className={`flex items-center justify-between p-2 md:p-3 rounded-lg ${
-                        p.id === myPlayerId ? 'bg-green-900/40 border border-green-600/30' : 'bg-white/5'
+                        p.id === myPlayerId ? 'bg-green-900/40 border border-green-600/30' : hasLeft ? 'bg-white/[0.02]' : 'bg-white/5'
                       }`}>
                         <div className="flex items-center gap-2 md:gap-3">
                           <span className="text-white/40 font-bold w-5 md:w-6 text-xs md:text-sm">#{idx + 1}</span>
                           <div>
-                            <div className="text-white font-bold text-xs md:text-sm">
-                              {p.name} {p.id === myPlayerId ? '(你)' : ''}
+                            <div className={`font-bold text-xs md:text-sm ${hasLeft ? 'text-white/40' : 'text-white'}`}>
+                              {p.name} {p.id === myPlayerId ? '(你)' : ''} {hasLeft ? '(已离开)' : ''}
                             </div>
                             <div className="text-white/40 text-[10px] md:text-xs">
                               总买入: ${p.totalBuyIn || initialChips}
@@ -1929,8 +1930,8 @@ export default function GamePage() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-yellow-300 font-bold text-xs md:text-sm">${p.chips}</div>
-                          <div className={`text-[10px] md:text-xs font-bold ${profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          <div className={`font-bold text-xs md:text-sm ${hasLeft ? 'text-yellow-300/50' : 'text-yellow-300'}`}>${p.chips}</div>
+                          <div className={`text-[10px] md:text-xs font-bold ${profit >= 0 ? 'text-green-400' : 'text-red-400'} ${hasLeft ? 'opacity-50' : ''}`}>
                             {profit >= 0 ? '+' : ''}{profit}
                           </div>
                         </div>

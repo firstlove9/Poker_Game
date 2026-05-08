@@ -15,7 +15,7 @@ function safeCallback(callback: any, response: any): void {
   }
 }
 
-function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: any[], potResults: any[], allHands: any[], finalGameState: any, io: any): void {
+function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: any[], potResults: any[], allHands: any[], finalGameState: any, io: any, roomManager: RoomManager): void {
   const mergedWinners = (() => {
     const map = new Map<string, any>();
     for (const w of winners) {
@@ -70,6 +70,8 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
       p.playerRoomRole = PlayerRoomRole.BUSTED;
     }
   }
+
+  roomManager.syncScoreboard(roomId);
 
   const isRunItTwice = finalGameState.runItTwiceResults && finalGameState.runItTwiceResults.length > 0;
 
@@ -254,7 +256,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
                       if (roomPlayer) h.playerName = roomPlayer.name;
                     }
 
-                    finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io);
+                    finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager);
                   }
                 }
               }
@@ -281,7 +283,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
             }
           }
 
-          finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io);
+          finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager);
         } else {
           const currentPlayerId = gameEngine.getCurrentPlayerId();
           if (currentPlayerId) {
@@ -386,7 +388,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
             if (roomPlayer) h.playerName = roomPlayer.name;
           }
 
-          finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io);
+          finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager);
         }
       }
 
@@ -488,7 +490,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
               if (roomPlayer) h.playerName = roomPlayer.name;
             }
 
-            finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io);
+            finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager);
           }, 2000);
         }
       }
@@ -583,6 +585,7 @@ function sanitizeRoom(room: any): any {
       hasPlayedHand: p.hasPlayedHand,
       playerRoomRole: p.playerRoomRole,
     })),
+    scoreboardEntries: room.scoreboardEntries || [],
   };
 }
 

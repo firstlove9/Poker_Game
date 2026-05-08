@@ -288,6 +288,7 @@ export interface Room {
   };
   status: 'waiting' | 'playing' | 'ended';
   players: RoomPlayer[];
+  scoreboardEntries?: ScoreboardEntry[];
   gameState?: GameState;
 }
 
@@ -296,6 +297,14 @@ export enum PlayerRoomRole {
   SEATED = 'seated',
   ACTIVE = 'active',
   BUSTED = 'busted',
+}
+
+export interface ScoreboardEntry {
+  id: string;
+  name: string;
+  chips: number;
+  totalBuyIn: number;
+  leftAt?: number;
 }
 
 export interface RoomPlayer {
