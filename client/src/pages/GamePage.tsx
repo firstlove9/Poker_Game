@@ -777,18 +777,18 @@ export default function GamePage() {
 
   const getPlayerPositions = (total: number) => {
     const positions = [
-      { x: 50, y: 92 },
-      { x: 15, y: 55 },
-      { x: 30, y: 10 },
-      { x: 70, y: 10 },
-      { x: 85, y: 55 },
-      { x: 50, y: 10 },
-      { x: 10, y: 30 },
-      { x: 90, y: 30 },
-      { x: 10, y: 80 },
-      { x: 90, y: 80 },
-      { x: 30, y: 92 },
-      { x: 70, y: 92 },
+      { x: 50, y: 95 },
+      { x: 8, y: 55 },
+      { x: 25, y: 5 },
+      { x: 75, y: 5 },
+      { x: 92, y: 55 },
+      { x: 50, y: 5 },
+      { x: 5, y: 28 },
+      { x: 95, y: 28 },
+      { x: 5, y: 82 },
+      { x: 95, y: 82 },
+      { x: 25, y: 95 },
+      { x: 75, y: 95 },
     ]
     return positions.slice(0, total)
   }
