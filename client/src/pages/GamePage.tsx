@@ -1009,6 +1009,21 @@ export default function GamePage() {
             </button>
           </div>
           <div className="flex gap-1 md:gap-2 flex-shrink-0">
+            {isAfk ? (
+              <button
+                onClick={handleAfk}
+                className="px-2 md:px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 text-xs md:text-sm font-bold"
+              >
+                🔄回来
+              </button>
+            ) : (
+              <button
+                onClick={handleAfk}
+                className="px-2 md:px-3 py-1 bg-gray-600 text-white/70 rounded hover:bg-gray-500 text-xs md:text-sm"
+              >
+                ☕AFK
+              </button>
+            )}
             <button
               onClick={() => setShowActionLog(!showActionLog)}
               className={`px-2 md:px-3 py-1 ${showActionLog ? 'bg-blue-500' : 'bg-blue-600'} text-white rounded hover:bg-blue-700 text-xs md:text-sm`}
@@ -1259,13 +1274,6 @@ export default function GamePage() {
                   全押 ${myChips}
                 </button>
               )}
-              <button
-                onClick={handleAfk}
-                className="px-2 md:px-3 py-1.5 md:py-2 bg-gray-600 text-white/70 rounded-lg hover:bg-gray-500 transition-colors text-xs md:text-sm"
-                title="临时离开"
-              >
-                ☕ AFK
-              </button>
             </div>
             {showRaiseSlider && (
               <div className="px-2 md:px-4 py-1.5 md:py-2 bg-gray-800 rounded-lg">
@@ -1362,24 +1370,11 @@ export default function GamePage() {
         {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && amIInCurrentGame && !isAfk && (
           <div className="flex items-center justify-center gap-2 py-2 md:py-3 bg-black/30">
             <span className="text-white/40 text-xs md:text-sm">等待其他玩家行动...</span>
-            <button
-              onClick={handleAfk}
-              className="px-2 md:px-3 py-1 bg-gray-600 text-white/70 rounded-lg hover:bg-gray-500 transition-colors text-xs md:text-sm"
-              title="临时离开"
-            >
-              ☕ AFK
-            </button>
           </div>
         )}
         {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && amIInCurrentGame && isAfk && (
           <div className="flex items-center justify-center gap-2 py-2 md:py-3 bg-black/30">
             <span className="text-yellow-300 text-xs md:text-sm">☕ 你处于AFK状态</span>
-            <button
-              onClick={handleAfk}
-              className="px-2 md:px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-xs md:text-sm"
-            >
-              🔄 回来
-            </button>
           </div>
         )}
 

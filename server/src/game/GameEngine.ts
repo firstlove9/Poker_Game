@@ -689,19 +689,33 @@ export class GameEngine {
       const initialChips = this.playerInitialChips.get(player.id) || 0;
       const totalWin = roundWinnings.get(player.id) || 0;
       const netWin = player.chips - initialChips;
-      const isWinner = netWin > 0;
+
+      let wonAnyRound = false;
+      let lostAnyRound = false;
+      for (const rr of roundResults) {
+        if (rr.winnerIds.includes(player.id)) {
+          if (rr.winnerIds.length === 1) {
+            wonAnyRound = true;
+          }
+        } else {
+          lostAnyRound = true;
+        }
+      }
+      const isWinner = wonAnyRound || (!lostAnyRound && netWin > 0);
 
       const roundHandRanks: string[] = [];
       for (let r = 0; r < roundResults.length; r++) {
         roundHandRanks.push(roundResults[r]?.handRanks[player.id] || '未知');
       }
 
+      const isTie = !wonAnyRound && !lostAnyRound;
+
       allHands.push({
         playerId: player.id,
         playerName: player.name,
         holeCards: this.state.playerCards[player.id] || [],
         handRank: roundHandRanks.join(' / '),
-        handDescription: isWinner ? `跑两轮获胜 +${totalWin}` : `跑两轮失利`,
+        handDescription: isWinner ? `跑两轮获胜 +${totalWin}` : isTie ? `跑两轮平局` : `跑两轮失利`,
         isWinner,
         winAmount: isWinner ? netWin : undefined,
         potType: isWinner ? 'both' : undefined,

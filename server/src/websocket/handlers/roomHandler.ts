@@ -30,6 +30,7 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
     const now = Date.now();
     const playersNeedReady = room.players.filter(p => {
       if (p.chips <= 0) return false;
+      if (p.isAfk) return false;
       if (!p.isOnline && p.disconnectedAt && (now - p.disconnectedAt) > DISCONNECT_TIMEOUT_MS) return false;
       return true;
     });
