@@ -26,7 +26,7 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
     p.playerRoomRole === PlayerRoomRole.ACTIVE || p.playerRoomRole === PlayerRoomRole.BUSTED
   );
   if (hasPlayedBefore) {
-    const DISCONNECT_TIMEOUT_MS = 30000;
+    const DISCONNECT_TIMEOUT_MS = 120000;
     const now = Date.now();
     const playersNeedReady = room.players.filter(p => {
       if (p.chips <= 0) return false;
@@ -157,6 +157,14 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
       const result = roomManager.joinRoom(data.roomId, data, playerId);
 
       if (result.success && result.room) {
+        if (result.replacedPlayerId) {
+          io.to(data.roomId).emit(ServerEvents.PLAYER_LEFT, {
+            playerId: result.replacedPlayerId,
+            room: sanitizeRoom(result.room),
+            isTemporary: false,
+          });
+        }
+
         socket.join(data.roomId);
         socket.data.roomId = data.roomId;
 
@@ -539,6 +547,7 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
               votes: Object.fromEntries(result.room.voteLeave?.votes || new Map()),
               totalPlayers: result.room.players.length,
               votedPlayers: result.room.voteLeave?.votes?.size || 0,
+              createdAt: result.room.voteLeave?.createdAt,
             });
 
             setTimeout(() => {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Users, Play, Check, X, Coins, HelpCircle } from 'lucide-react'
-import { useSocketStore } from '../stores/socketStore'
+import { useSocketStore, saveRoomId, clearSavedRoom } from '../stores/socketStore'
 import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
 import { ClientEvents, ServerEvents, GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO } from '../types'
@@ -13,6 +13,7 @@ interface VoteInfo {
   votes: Record<string, boolean>
   totalPlayers: number
   votedPlayers: number
+  createdAt?: number
 }
 
 export default function RoomPage() {
@@ -25,6 +26,7 @@ export default function RoomPage() {
   const [voteInfo, setVoteInfo] = useState<VoteInfo | null>(null)
   const [showVoteModal, setShowVoteModal] = useState(false)
   const [showRuleHelp, setShowRuleHelp] = useState(false)
+  const [voteCountdown, setVoteCountdown] = useState(15)
 
   const getMyPlayerId = () => {
     try {
@@ -47,6 +49,12 @@ export default function RoomPage() {
 
     const handlePlayerLeft = (data: any) => {
       setCurrentRoom(data.room)
+      const pid = getMyPlayerId()
+      if (data.playerId === pid) {
+        addToast('你已被移出房间', 'error')
+        clearSavedRoom()
+        navigate('/lobby')
+      }
     }
 
     const handlePlayerReadyChanged = (data: any) => {
@@ -55,6 +63,7 @@ export default function RoomPage() {
 
     const handleGameStarted = (data: any) => {
       setCurrentRoom(data.room)
+      saveRoomId(roomId!, 'playing')
       navigate(`/game/${roomId}`)
     }
 
@@ -119,17 +128,51 @@ export default function RoomPage() {
     }
   }, [isConnected])
 
-  const fetchRoomInfo = async () => {
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && roomId) {
+        if (!isConnected) {
+          const { socket } = useSocketStore.getState()
+          if (socket && !socket.connected) {
+            socket.connect()
+          }
+        } else {
+          fetchRoomInfo()
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [roomId, isConnected])
+
+  useEffect(() => {
+    if (!showVoteModal || !voteInfo?.createdAt) {
+      setVoteCountdown(15)
+      return
+    }
+    const update = () => {
+      const elapsed = (Date.now() - voteInfo.createdAt!) / 1000
+      const remaining = Math.max(0, Math.ceil(15 - elapsed))
+      setVoteCountdown(remaining)
+    }
+    update()
+    const timer = setInterval(update, 1000)
+    return () => clearInterval(timer)
+  }, [showVoteModal, voteInfo?.createdAt])
+
+  const fetchRoomInfo = async (retryCount = 0) => {
     try {
       const response = await fetch(`/api/rooms/${roomId}`)
       if (!response.ok) {
         addToast('房间不存在或已关闭', 'error')
+        clearSavedRoom()
         navigate('/lobby')
         return
       }
       const data = await response.json()
       if (data.success) {
         setCurrentRoom(data.room)
+        saveRoomId(roomId!, 'waiting')
         const pid = getMyPlayerId()
         const player = data.room.players.find((p: any) => p.id === pid)
         if (player) {
@@ -137,12 +180,16 @@ export default function RoomPage() {
         }
       } else {
         addToast('房间不存在或已关闭', 'error')
+        clearSavedRoom()
         navigate('/lobby')
       }
     } catch (error) {
       console.error('Failed to fetch room info:', error)
-      addToast('无法连接服务器', 'error')
-      navigate('/lobby')
+      if (retryCount < 3) {
+        setTimeout(() => fetchRoomInfo(retryCount + 1), 2000)
+      } else {
+        addToast('无法连接服务器，请刷新页面重试', 'error')
+      }
     }
   }
 
@@ -165,6 +212,7 @@ export default function RoomPage() {
     } else {
       try {
         await emit(ClientEvents.LEAVE_ROOM)
+        clearSavedRoom()
         setCurrentRoom(null)
         navigate('/lobby')
       } catch (error: any) {
@@ -227,8 +275,8 @@ export default function RoomPage() {
         </div>
       )}
       {!isConnected && !isReconnecting && (
-        <div className="bg-red-800 text-white text-center py-2 text-sm font-bold mb-4 rounded-lg">
-          ❌ 连接已断开，请刷新页面
+        <div className="bg-red-800 text-white text-center py-3 text-sm font-bold mb-4 rounded-lg">
+          ❌ 连接已断开，请刷新页面重新进入房间
         </div>
       )}
       {/* 投票离开弹窗 */}
@@ -238,9 +286,14 @@ export default function RoomPage() {
             <h2 className="text-2xl font-bold text-white mb-4 text-center">
               离开房间投票
             </h2>
-            <p className="text-white/80 text-center mb-6">
+            <p className="text-white/80 text-center mb-4">
               <span className="text-gold font-bold">{voteInfo.initiatorName}</span> 发起离开投票
             </p>
+            {voteCountdown > 0 && (
+              <p className="text-orange-400 text-center mb-4 font-bold text-lg">
+                ⏱ {voteCountdown}秒后未投票将自动同意
+              </p>
+            )}
 
             <div className="mb-6">
               <p className="text-white/60 text-sm mb-3">投票进度: {voteInfo.votedPlayers}/{voteInfo.totalPlayers}</p>
@@ -256,7 +309,7 @@ export default function RoomPage() {
                       </span>
                       {vote === true && <span className="text-green-400">✓ 同意</span>}
                       {vote === false && <span className="text-red-400">✗ 拒绝</span>}
-                      {vote === undefined && <span className="text-white/40">等待中...</span>}
+                      {vote === undefined && <span className="text-white/40">等待中{voteCountdown > 0 ? ` (${voteCountdown}s)` : '...'}</span>}
                     </div>
                   )
                 })}

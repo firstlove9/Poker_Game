@@ -1,6 +1,6 @@
-import { Routes, Route } from 'react-router-dom'
-import { useEffect } from 'react'
-import { useSocketStore } from './stores/socketStore'
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { useSocketStore, loadSavedRoom, clearSavedRoom } from './stores/socketStore'
 import ToastContainer from './components/ToastContainer'
 import HomePage from './pages/HomePage'
 import LobbyPage from './pages/LobbyPage'
@@ -9,12 +9,52 @@ import GamePage from './pages/GamePage'
 import SinglePlayerPage from './pages/SinglePlayerPage'
 
 function App() {
-  const { connect, disconnect } = useSocketStore()
+  const { connect, disconnect, isConnected } = useSocketStore()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const prevConnected = useRef(false)
 
   useEffect(() => {
     connect()
     return () => disconnect()
   }, [connect, disconnect])
+
+  useEffect(() => {
+    if (!isConnected) {
+      prevConnected.current = false
+      return
+    }
+    if (prevConnected.current) return
+    prevConnected.current = true
+
+    const isInRoom = location.pathname.startsWith('/room/') || location.pathname.startsWith('/game/')
+    if (isInRoom) return
+
+    const saved = loadSavedRoom()
+    if (!saved) return
+
+    fetch(`/api/rooms/${saved.roomId}`)
+      .then(res => {
+        if (!res.ok) {
+          clearSavedRoom()
+          return null
+        }
+        return res.json()
+      })
+      .then(data => {
+        if (!data?.success) {
+          clearSavedRoom()
+          return
+        }
+        const targetPath = saved.status === 'playing'
+          ? `/game/${saved.roomId}`
+          : `/room/${saved.roomId}`
+        navigate(targetPath, { replace: true })
+      })
+      .catch(() => {
+        clearSavedRoom()
+      })
+  }, [isConnected])
 
   return (
     <div className="min-h-screen bg-poker-green-dark">

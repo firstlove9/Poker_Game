@@ -19,6 +19,8 @@ interface SocketState {
 
 const registeredListeners: Array<{ event: string; callback: (data: any) => void }> = []
 const PLAYER_ID_KEY = 'poker_player_id'
+const ROOM_ID_KEY = 'poker_room_id'
+const ROOM_STATUS_KEY = 'poker_room_status'
 
 function savePlayerId(id: string) {
   try {
@@ -33,6 +35,31 @@ function loadPlayerId(): string | null {
   } catch {
     return null
   }
+}
+
+export function saveRoomId(roomId: string, status: 'waiting' | 'playing') {
+  try {
+    localStorage.setItem(ROOM_ID_KEY, roomId)
+    localStorage.setItem(ROOM_STATUS_KEY, status)
+  } catch {}
+}
+
+export function loadSavedRoom(): { roomId: string; status: string } | null {
+  try {
+    const roomId = localStorage.getItem(ROOM_ID_KEY)
+    const status = localStorage.getItem(ROOM_STATUS_KEY)
+    if (roomId) return { roomId, status: status || 'waiting' }
+    return null
+  } catch {
+    return null
+  }
+}
+
+export function clearSavedRoom() {
+  try {
+    localStorage.removeItem(ROOM_ID_KEY)
+    localStorage.removeItem(ROOM_STATUS_KEY)
+  } catch {}
 }
 
 function rebindListeners(socket: Socket) {
@@ -54,7 +81,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     const socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       reconnection: true,
-      reconnectionAttempts: Infinity,
+      reconnectionAttempts: 20,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       timeout: 20000,
@@ -127,7 +154,7 @@ export const useSocketStore = create<SocketState>((set, get) => ({
 
       const timeout = setTimeout(() => {
         reject(new Error('Request timeout'))
-      }, timeoutMs || 180000)
+      }, timeoutMs || 15000)
 
       const ack = (response: any) => {
         clearTimeout(timeout)

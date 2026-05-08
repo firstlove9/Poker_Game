@@ -44,14 +44,13 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
       if (previousSocketId) {
         const previousSocket = io.sockets.sockets.get(previousSocketId);
         if (previousSocket && previousSocket.connected) {
-          playerId = `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          isReconnection = false;
-          console.log(`Player ${queryPlayerId} already has active socket, assigning new ID: ${playerId}`);
-        } else {
-          playerId = queryPlayerId;
-          isReconnection = true;
-          console.log(`Player reconnecting: ${playerId}`);
+          console.log(`Player ${queryPlayerId} has stale socket ${previousSocketId}, forcing disconnect`);
+          previousSocket.data.replaced = true;
+          previousSocket.disconnect(true);
         }
+        playerId = queryPlayerId;
+        isReconnection = true;
+        console.log(`Player reconnecting: ${playerId}`);
       } else {
         playerId = queryPlayerId;
         isReconnection = true;
@@ -145,6 +144,11 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
     socket.on('disconnect', () => {
       console.log(`Client disconnected: ${socket.id}`);
 
+      if (socket.data.replaced) {
+        playerSocketMap.delete(playerId);
+        return;
+      }
+
       const roomId = roomManager.getPlayerRoomId(playerId);
       if (roomId) {
         const room = roomManager.getRoom(roomId);
@@ -164,11 +168,6 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
               const currentRoom = roomManager.getRoom(roomId);
               if (!currentRoom) return;
               if (currentRoom.status === RoomStatus.PLAYING) {
-                const dp = currentRoom.players.find(p => p.id === disconnectedPlayerId);
-                if (dp && !dp.isOnline && dp.disconnectedAt) {
-                  dp.isOnline = true;
-                  dp.disconnectedAt = undefined;
-                }
                 return;
               }
               const dp = currentRoom.players.find(p => p.id === disconnectedPlayerId);
@@ -191,7 +190,7 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
                   });
                 }
               }
-            }, 31000);
+            }, 120000);
           }
         }
       }

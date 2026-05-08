@@ -24,6 +24,8 @@ const io = new Server(httpServer, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
+  pingInterval: 10000,
+  pingTimeout: 30000,
 });
 
 app.use(cors({

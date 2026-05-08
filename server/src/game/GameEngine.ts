@@ -334,6 +334,8 @@ export class GameEngine {
   }
 
   private checkHeadsUpAllIn(): boolean {
+    if (this.state.phase === GamePhase.RIVER) return false;
+
     const activePlayers = this.players.filter(p =>
       this.state.playerStatus[p.id] === PlayerStatus.PLAYING
     );

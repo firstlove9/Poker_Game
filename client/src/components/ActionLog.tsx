@@ -72,103 +72,105 @@ const ACTION_NAMES: Record<string, string> = {
 }
 
 const PHASE_NAMES: Record<string, string> = {
-  'pre-flop': '翻牌前',
+  'pre-flop': '翻前',
   'flop': '翻牌',
   'turn': '转牌',
   'river': '河牌',
   'showdown': '摊牌',
 }
 
-const HAND_RANK_ICONS: Record<string, string> = {
-  '皇家同花顺': '👑',
-  '同花顺': '🌈',
-  '四条': '💎',
-  '葫芦': '🏠',
-  '同花': '🌸',
-  '顺子': '🔗',
-  '三条': '🎯',
-  '两对': '✌️',
-  '一对': '👫',
-  '高牌': '🃏',
-  '弃牌': '🛑',
+const PHASE_COLORS: Record<string, string> = {
+  'pre-flop': 'text-orange-400',
+  'flop': 'text-blue-400',
+  'turn': 'text-purple-400',
+  'river': 'text-red-400',
+  'showdown': 'text-yellow-400',
 }
 
-const SUIT_SYMBOLS: Record<string, { symbol: string; color: string }> = {
-  '♠': { symbol: '♠', color: 'text-white' },
-  '♥': { symbol: '♥', color: 'text-red-400' },
-  '♦': { symbol: '♦', color: 'text-red-400' },
-  '♣': { symbol: '♣', color: 'text-white' },
-  's': { symbol: '♠', color: 'text-white' },
-  'h': { symbol: '♥', color: 'text-red-400' },
-  'd': { symbol: '♦', color: 'text-red-400' },
-  'c': { symbol: '♣', color: 'text-white' },
-  'spades': { symbol: '♠', color: 'text-white' },
-  'hearts': { symbol: '♥', color: 'text-red-400' },
-  'diamonds': { symbol: '♦', color: 'text-red-400' },
-  'clubs': { symbol: '♣', color: 'text-white' },
+const HAND_RANK_LABELS: Record<string, string> = {
+  '皇家同花顺': '👑同花',
+  '同花顺': '🌈顺子',
+  '四条': '💎四条',
+  '葫芦': '🏠葫芦',
+  '同花': '🌸同花',
+  '顺子': '🔗顺子',
+  '三条': '🎯三条',
+  '两对': '✌两对',
+  '一对': '👫一对',
+  '高牌': '🃏高牌',
+  '弃牌': '🛑弃牌',
 }
 
-function parseCardStr(cardStr: string): { rank: string; suit: { symbol: string; color: string } } | null {
+const SUIT_INFO: Record<string, { symbol: string; isRed: boolean }> = {
+  '♠': { symbol: '♠', isRed: false },
+  '♥': { symbol: '♥', isRed: true },
+  '♦': { symbol: '♦', isRed: true },
+  '♣': { symbol: '♣', isRed: false },
+  's': { symbol: '♠', isRed: false },
+  'h': { symbol: '♥', isRed: true },
+  'd': { symbol: '♦', isRed: true },
+  'c': { symbol: '♣', isRed: false },
+  'spades': { symbol: '♠', isRed: false },
+  'hearts': { symbol: '♥', isRed: true },
+  'diamonds': { symbol: '♦', isRed: true },
+  'clubs': { symbol: '♣', isRed: false },
+}
+
+function parseCardStr(cardStr: string): { rank: string; suit: { symbol: string; isRed: boolean } } | null {
   if (!cardStr || cardStr.length < 2) return null
   const suitKeys = ['spades', 'hearts', 'diamonds', 'clubs']
   for (const key of suitKeys) {
     if (cardStr.endsWith(key)) {
       const rank = cardStr.slice(0, -key.length)
-      const suit = SUIT_SYMBOLS[key]
+      const suit = SUIT_INFO[key]
       if (rank && suit) return { rank, suit }
     }
   }
   const rank = cardStr.slice(0, -1)
   const suitChar = cardStr.slice(-1)
-  const suit = SUIT_SYMBOLS[suitChar]
+  const suit = SUIT_INFO[suitChar]
   if (suit && rank) return { rank, suit }
   return null
+}
+
+function MiniCard({ cardStr }: { cardStr: string }) {
+  const parsed = parseCardStr(cardStr)
+  if (!parsed) return <span>{cardStr}</span>
+  return (
+    <span className={`inline-flex items-center justify-center px-1 py-0.5 rounded bg-white/90 shadow-sm font-bold text-[11px] leading-none ${parsed.suit.isRed ? 'text-red-600' : 'text-gray-900'}`}>
+      {parsed.rank}{parsed.suit.symbol}
+    </span>
+  )
+}
+
+function renderPokerCards(text: string) {
+  const parts = text.split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return null
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {parts.map((card, i) => <MiniCard key={i} cardStr={card} />)}
+    </span>
+  )
 }
 
 function renderCommunityCards(text: string) {
   const parts = text.split(/\s+/).filter(Boolean)
   if (parts.length === 0) return null
-  const groups: { cards: string[]; label?: string }[] = []
-  if (parts.length >= 3) {
-    groups.push({ cards: parts.slice(0, 3), label: '翻牌' })
-  }
-  if (parts.length >= 4) {
-    groups.push({ cards: [parts[3]], label: '转牌' })
-  }
-  if (parts.length >= 5) {
-    groups.push({ cards: [parts[4]], label: '河牌' })
-  }
-  if (groups.length === 0) {
-    groups.push({ cards: parts })
-  }
+  const groups: string[][] = []
+  if (parts.length >= 3) groups.push(parts.slice(0, 3))
+  if (parts.length >= 4) groups.push([parts[3]])
+  if (parts.length >= 5) groups.push([parts[4]])
+  if (groups.length === 0) groups.push(parts)
   return (
-    <span className="font-mono inline-flex items-center gap-1.5">
+    <span className="inline-flex items-center gap-1">
       {groups.map((g, gi) => (
         <span key={gi} className="inline-flex items-center gap-0.5">
           {gi > 0 && <span className="text-white/20 mx-0.5">|</span>}
-          {g.cards.map((card, ci) => {
-            const parsed = parseCardStr(card)
-            if (parsed) {
-              return <span key={ci} className={`${parsed.suit.color} text-sm font-bold`}>{parsed.rank}<span className="text-base">{parsed.suit.symbol}</span></span>
-            }
-            return <span key={ci}>{card}</span>
-          })}
+          {g.map((card, ci) => <MiniCard key={ci} cardStr={card} />)}
         </span>
       ))}
     </span>
   )
-}
-
-function renderCards(text: string) {
-  const parts = text.split(/(\s+)/)
-  return parts.map((part, i) => {
-    if (part.trim() === '') return part
-    const parsed = parseCardStr(part)
-    if (parsed) {
-      return <span key={i} className={`${parsed.suit.color} text-sm font-bold`}>{parsed.rank}<span className="text-base">{parsed.suit.symbol}</span></span>
-    }
-    return <span key={i}>{part}</span>
-  })
 }
 
 type TabType = 'actions' | 'results'
@@ -202,112 +204,141 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
           )}
         </button>
       </div>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-2 space-y-1 text-xs">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto text-xs">
         {activeTab === 'actions' ? (
           logs.length === 0 ? (
             <div className="text-white/30 text-center py-4">暂无行动记录</div>
           ) : (
-            [...logs].reverse().map((log) => (
-              <div key={log.id} className="flex items-start gap-1.5 py-1 px-1.5 rounded bg-white/5 hover:bg-white/10 transition-colors">
-                <span className="text-sm flex-shrink-0">{EMOJIS[log.action] || '📌'}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1 flex-wrap">
-                    <span className="text-white/90 font-medium truncate">{log.playerName}</span>
-                    <span className="text-blue-300">{ACTION_NAMES[log.action] || log.action}</span>
-                    {log.amount !== undefined && log.amount > 0 && (
-                      <span className="text-yellow-300 font-bold">${log.amount}</span>
-                    )}
-                  </div>
-                  <div className="text-white/30 text-[10px]">
-                    {PHASE_NAMES[log.phase] || log.phase}
-                  </div>
-                </div>
-              </div>
-            ))
+            <table className="w-full">
+              <thead>
+                <tr className="text-white/40 border-b border-white/10">
+                  <th className="text-left py-1.5 px-2 w-6"></th>
+                  <th className="text-left py-1.5 px-1 w-14">阶段</th>
+                  <th className="text-left py-1.5 px-1">玩家</th>
+                  <th className="text-left py-1.5 px-1">行动</th>
+                  <th className="text-right py-1.5 px-2 w-12">金额</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...logs].reverse().map((log) => (
+                  <tr key={log.id} className="border-b border-white/5 hover:bg-white/10 transition-colors">
+                    <td className="py-1 px-2"><span className="text-sm">{EMOJIS[log.action] || '📌'}</span></td>
+                    <td className="py-1 px-1">
+                      <span className={`${PHASE_COLORS[log.phase] || 'text-white/50'} font-medium`}>
+                        {PHASE_NAMES[log.phase] || log.phase}
+                      </span>
+                    </td>
+                    <td className="py-1 px-1 text-white/90 font-medium truncate max-w-[72px]" title={log.playerName}>{log.playerName}</td>
+                    <td className="py-1 px-1 text-blue-300">{ACTION_NAMES[log.action] || log.action}</td>
+                    <td className="py-1 px-2 text-right">
+                      {log.amount !== undefined && log.amount > 0 ? (
+                        <span className="text-yellow-300 font-bold">${log.amount}</span>
+                      ) : (
+                        <span className="text-white/20">-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )
         ) : (
           handResults.length === 0 ? (
             <div className="text-white/30 text-center py-4">暂无牌局结果</div>
           ) : (
-            [...handResults].reverse().map((result) => (
-              <div key={result.id} className="py-1.5 px-2 rounded border bg-white/5 border-white/10">
-                {result.isRunItTwice && result.runItTwiceRounds ? (
-                  <>
-                    {result.runItTwiceRounds.map((round, ri) => (
-                      <div key={ri} className="mb-1">
-                        <div className="text-[10px] text-purple-300 font-bold mb-0.5">第{ri + 1}轮</div>
-                        {round.communityCards && (
-                          <div className="text-[11px] mb-0.5 flex items-center gap-0.5">
-                            <span className="text-white/40">公共牌:</span>
-                            {renderCommunityCards(round.communityCards)}
-                          </div>
-                        )}
-                        <div className="space-y-0.5">
-                          {result.players.map((p, pi) => {
-                            const isRoundWinner = round.winnerIds.includes(p.playerId)
-                            const rank = round.handRanks[p.playerId] || ''
-                            return (
-                              <div key={pi} className="flex items-center gap-1 flex-wrap">
-                                <span className={`font-medium ${isRoundWinner ? 'text-green-400' : 'text-white/60'}`}>
-                                  {isRoundWinner ? '🏆' : '  '} {p.playerName}
-                                </span>
-                                {isRoundWinner && (
-                                  <span className="text-yellow-300 font-bold text-[11px]">+${round.winAmount}</span>
-                                )}
-                                {rank && (
-                                  <span className="text-[10px] text-white/50">{rank}</span>
-                                )}
+            <div className="p-2 space-y-2">
+              {[...handResults].reverse().map((result) => (
+                <div key={result.id} className="rounded border bg-white/5 border-white/10 overflow-hidden">
+                  {result.communityCards && (
+                    <div className="px-2 py-1 bg-white/5 border-b border-white/10 flex items-center gap-1">
+                      <span className="text-white/40 text-[10px]">公共牌</span>
+                      {renderCommunityCards(result.communityCards)}
+                    </div>
+                  )}
+                  {result.isRunItTwice && result.runItTwiceRounds ? (
+                    <>
+                      {result.runItTwiceRounds.map((round, ri) => (
+                        <div key={ri} className={ri > 0 ? 'border-t border-white/10' : ''}>
+                          <div className="px-2 py-0.5 bg-purple-500/10 text-purple-300 font-bold text-[10px]">第{ri + 1}轮</div>
+                          {round.communityCards && (
+                            <div className="px-2 py-0.5 flex items-center gap-0.5">
+                              <span className="text-white/40 text-[10px]">牌面</span>
+                              {renderCommunityCards(round.communityCards)}
+                            </div>
+                          )}
+                          <table className="w-full">
+                            <tbody>
+                              {result.players.map((p, pi) => {
+                                const isRoundWinner = round.winnerIds.includes(p.playerId)
+                                const rank = round.handRanks[p.playerId] || ''
+                                return (
+                                  <tr key={pi} className={`border-t border-white/5 ${isRoundWinner ? 'bg-green-500/10' : ''}`}>
+                                    <td className="py-1 px-1.5 w-5 text-center">{isRoundWinner ? '🏆' : ''}</td>
+                                    <td className="py-1 px-1">
+                                      <div className={`font-medium ${isRoundWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}</div>
+                                      {isRoundWinner && <div className="text-yellow-300 font-bold text-[10px]">+${round.winAmount}</div>}
+                                    </td>
+                                    <td className="py-1 px-1 text-right">
+                                      {rank && <span className="text-cyan-300/80 text-[10px]">{rank}</span>}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ))}
+                      <div className="border-t border-white/10">
+                        <div className="px-2 py-0.5 bg-yellow-500/10 text-yellow-300 font-bold text-[10px]">总计</div>
+                        <table className="w-full">
+                          <tbody>
+                            {result.players.map((p, pi) => (
+                              <tr key={pi} className={`border-t border-white/5 ${p.isWinner ? 'bg-green-500/10' : ''}`}>
+                                <td className="py-1 px-1.5 w-5 text-center">{p.isWinner ? '🏆' : ''}</td>
+                                <td className="py-1 px-1">
+                                  <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}</div>
+                                  {p.isWinner && p.winAmount !== undefined && p.winAmount > 0 && (
+                                    <div className="text-yellow-300 font-bold text-[10px]">+${p.winAmount}</div>
+                                  )}
+                                </td>
+                                <td className="py-1 px-1 text-right">
+                                  <div className="flex flex-col items-end gap-0.5">
+                                    {p.holeCards && renderPokerCards(p.holeCards)}
+                                    <span className="text-cyan-300/80 text-[10px]" title={p.handRank}>{HAND_RANK_LABELS[p.handRank] || '🃏高牌'}</span>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  ) : (
+                    <table className="w-full">
+                      <tbody>
+                        {result.players.map((p, pi) => (
+                          <tr key={pi} className={`border-t border-white/5 ${p.isWinner ? 'bg-green-500/10' : ''}`}>
+                            <td className="py-1 px-1.5 w-5 text-center">{p.isWinner ? '🏆' : ''}</td>
+                            <td className="py-1 px-1">
+                              <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}</div>
+                              {p.isWinner && p.winAmount !== undefined && p.winAmount > 0 && (
+                                <div className="text-yellow-300 font-bold text-[10px]">+${p.winAmount}</div>
+                              )}
+                            </td>
+                            <td className="py-1 px-1 text-right">
+                              <div className="flex flex-col items-end gap-0.5">
+                                {p.holeCards && renderPokerCards(p.holeCards)}
+                                <span className="text-cyan-300/80 text-[10px]" title={p.handRank}>{HAND_RANK_LABELS[p.handRank] || '🃏高牌'}</span>
                               </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                    <div className="border-t border-white/10 pt-0.5 mt-0.5">
-                      <div className="text-[10px] text-white/40 font-bold mb-0.5">总计</div>
-                      {result.players.map((p, pi) => (
-                        <div key={pi} className="flex items-center gap-1 flex-wrap">
-                          <span className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>
-                            {p.isWinner ? '🏆' : '  '} {p.playerName}
-                          </span>
-                          {p.isWinner && p.winAmount !== undefined && p.winAmount > 0 && (
-                            <span className="text-yellow-300 font-bold">+${p.winAmount}</span>
-                          )}
-                          {p.holeCards && (
-                            <span className="font-mono text-xs">{renderCards(p.holeCards)}</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    {result.communityCards && (
-                      <div className="text-[11px] mb-1 flex items-center gap-0.5">
-                        <span className="text-white/40">公共牌:</span>
-                        {renderCommunityCards(result.communityCards)}
-                      </div>
-                    )}
-                    <div className="space-y-0.5">
-                      {result.players.map((p, pi) => (
-                        <div key={pi} className="flex items-center gap-1 flex-wrap">
-                          <span className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>
-                            {p.isWinner ? '🏆' : '  '} {p.playerName}
-                          </span>
-                          {p.isWinner && p.winAmount !== undefined && p.winAmount > 0 && (
-                            <span className="text-yellow-300 font-bold">+${p.winAmount}</span>
-                          )}
-                          {p.holeCards && (
-                            <span className="font-mono text-xs">{renderCards(p.holeCards)}</span>
-                          )}
-                          <span className="text-sm" title={p.handRank}>{HAND_RANK_ICONS[p.handRank] || '🃏'}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            ))
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              ))}
+            </div>
           )
         )}
       </div>

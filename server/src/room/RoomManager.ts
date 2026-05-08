@@ -99,7 +99,7 @@ export class RoomManager {
   }
 
   // 加入房间
-  joinRoom(roomId: string, request: JoinRoomRequest, playerId: string): { success: boolean; room?: Room; error?: string } {
+  joinRoom(roomId: string, request: JoinRoomRequest, playerId: string): { success: boolean; room?: Room; error?: string; replacedPlayerId?: string } {
     const room = this.rooms.get(roomId);
     if (!room) {
       return { success: false, error: '房间不存在' };
@@ -134,8 +134,33 @@ export class RoomManager {
 
     // 检查昵称是否重复
     const trimmedName = request.playerName.trim();
-    if (room.players.some(p => p.name === trimmedName)) {
-      return { success: false, error: '该昵称已被使用，请更换' };
+    let replacedPlayerId: string | undefined;
+    const sameNamePlayer = room.players.find(p => p.name === trimmedName);
+    if (sameNamePlayer) {
+      if (!sameNamePlayer.isOnline) {
+        replacedPlayerId = sameNamePlayer.id;
+        const existingEntry = room.scoreboardEntries.find(e => e.id === sameNamePlayer.id);
+        if (existingEntry) {
+          existingEntry.chips = sameNamePlayer.chips;
+          existingEntry.totalBuyIn = sameNamePlayer.totalBuyIn;
+          existingEntry.leftAt = Date.now();
+        } else {
+          room.scoreboardEntries.push({
+            id: sameNamePlayer.id,
+            name: sameNamePlayer.name,
+            chips: sameNamePlayer.chips,
+            totalBuyIn: sameNamePlayer.totalBuyIn,
+            leftAt: Date.now(),
+          });
+        }
+        room.players = room.players.filter(p => p.id !== sameNamePlayer.id);
+        this.playerRooms.delete(sameNamePlayer.id);
+        if (room.config.hostId === sameNamePlayer.id && room.players.length > 0) {
+          room.config.hostId = room.players[0].id;
+        }
+      } else {
+        return { success: false, error: '该昵称已被使用，请更换' };
+      }
     }
 
     const isSpectator = room.status === RoomStatus.PLAYING;
@@ -176,7 +201,7 @@ export class RoomManager {
     this.playerRooms.set(playerId, roomId);
     this.syncScoreboard(roomId);
 
-    return { success: true, room };
+    return { success: true, room, replacedPlayerId };
   }
 
   // 离开房间

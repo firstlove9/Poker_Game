@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useSocketStore } from '../stores/socketStore'
+import { useSocketStore, saveRoomId, clearSavedRoom } from '../stores/socketStore'
 import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
 import { ClientEvents, ServerEvents, Card, PlayerHandInfo, RunItTwiceChoice, RunItTwiceDiceResult, RunItTwiceRoundResult, GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO, ScoreboardEntry } from '../types'
@@ -61,10 +61,12 @@ export default function GamePage() {
     votes: Record<string, boolean>
     totalPlayers: number
     votedPlayers: number
+    createdAt?: number
   } | null>(null)
   const [showVoteModal, setShowVoteModal] = useState(false)
   const [voteCooldownUntil, setVoteCooldownUntil] = useState<number>(0)
   const [voteCooldownRemaining, setVoteCooldownRemaining] = useState(0)
+  const [voteCountdown, setVoteCountdown] = useState(15)
 
   const [showRunItTwiceDialog, setShowRunItTwiceDialog] = useState(false)
   const [runItTwiceMyChoice, setRunItTwiceMyChoice] = useState<RunItTwiceChoice | null>(null)
@@ -122,6 +124,21 @@ export default function GamePage() {
     const timer = setInterval(update, 1000)
     return () => clearInterval(timer)
   }, [voteCooldownUntil])
+
+  useEffect(() => {
+    if (!showVoteModal || !voteInfo?.createdAt) {
+      setVoteCountdown(15)
+      return
+    }
+    const update = () => {
+      const elapsed = (Date.now() - voteInfo.createdAt!) / 1000
+      const remaining = Math.max(0, Math.ceil(15 - elapsed))
+      setVoteCountdown(remaining)
+    }
+    update()
+    const timer = setInterval(update, 1000)
+    return () => clearInterval(timer)
+  }, [showVoteModal, voteInfo?.createdAt])
 
   useEffect(() => {
     if (!roomId) return
@@ -242,6 +259,13 @@ export default function GamePage() {
       if (data.room) {
         setCurrentRoom(data.room)
       }
+      if (data.playerId === myPlayerId) {
+        addToast('你已被移出房间', 'error')
+        clearLogStorage()
+        clearSavedRoom()
+        reset()
+        navigate('/lobby')
+      }
     }
 
     const handlePlayerReadyChanged = (data: any) => {
@@ -257,6 +281,7 @@ export default function GamePage() {
     const handleRoomClosed = (data: any) => {
       addToast(data.reason || '房间已关闭', 'error')
       clearLogStorage()
+      clearSavedRoom()
       reset()
       navigate('/lobby')
     }
@@ -280,6 +305,7 @@ export default function GamePage() {
       if (data.approved) {
         addToast('所有玩家同意离开，房间已解散', 'info')
         clearLogStorage()
+        clearSavedRoom()
         reset()
         navigate('/lobby')
       } else {
@@ -293,6 +319,7 @@ export default function GamePage() {
     const handleRoomLeft = (data: any) => {
       if (data.reason === 'vote') {
         clearLogStorage()
+        clearSavedRoom()
         reset()
         navigate('/lobby')
       }
@@ -502,12 +529,30 @@ export default function GamePage() {
     }
   }, [isConnected])
 
-  const fetchGameState = async () => {
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && roomId) {
+        if (!isConnected) {
+          const { socket } = useSocketStore.getState()
+          if (socket && !socket.connected) {
+            socket.connect()
+          }
+        } else {
+          fetchGameState()
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [roomId, isConnected])
+
+  const fetchGameState = async (retryCount = 0) => {
     try {
       const response = await fetch(`/api/rooms/${roomId}`)
       if (!response.ok) {
         addToast('房间不存在或已关闭', 'error')
         clearLogStorage()
+        clearSavedRoom()
         reset()
         navigate('/lobby')
         return
@@ -515,6 +560,7 @@ export default function GamePage() {
       const data = await response.json()
       if (data.success && data.room) {
         setCurrentRoom(data.room)
+        saveRoomId(roomId!, 'playing')
         if (myPlayerId) {
           const player = data.room.players.find((p: any) => p.id === myPlayerId)
           if (player) {
@@ -523,6 +569,7 @@ export default function GamePage() {
           } else {
             addToast('你已不在房间中', 'error')
             clearLogStorage()
+            clearSavedRoom()
             reset()
             navigate('/lobby')
             return
@@ -558,15 +605,17 @@ export default function GamePage() {
       } else {
         addToast('房间不存在或已关闭', 'error')
         clearLogStorage()
+        clearSavedRoom()
         reset()
         navigate('/lobby')
       }
     } catch (error) {
       console.error('Failed to fetch game state:', error)
-      addToast('无法连接服务器', 'error')
-      clearLogStorage()
-      reset()
-      navigate('/lobby')
+      if (retryCount < 3) {
+        setTimeout(() => fetchGameState(retryCount + 1), 2000)
+      } else {
+        addToast('无法连接服务器，请刷新页面重试', 'error')
+      }
     }
   }
 
@@ -584,6 +633,7 @@ export default function GamePage() {
         const result = await emit(ClientEvents.VOTE_LEAVE)
         if (result?.directLeave) {
           clearLogStorage()
+          clearSavedRoom()
           reset()
           navigate('/lobby')
         }
@@ -594,6 +644,7 @@ export default function GamePage() {
       try {
         await emit(ClientEvents.LEAVE_ROOM)
         clearLogStorage()
+        clearSavedRoom()
         reset()
         navigate('/lobby')
       } catch (error: any) {
@@ -714,6 +765,9 @@ export default function GamePage() {
       }
       await emit(ClientEvents.PLAYER_ACTION, { action, amount: finalAmount })
     } catch (error: any) {
+      if (gameState?.currentPlayerId === myPlayerId) {
+        setIsMyTurn(true)
+      }
       setMessage(error.message || '操作失败')
       setTimeout(() => setMessage(''), 3000)
     }
@@ -930,9 +984,14 @@ export default function GamePage() {
             <h2 className="text-2xl font-bold text-white mb-4 text-center">
               离开房间投票
             </h2>
-            <p className="text-white/80 text-center mb-6">
+            <p className="text-white/80 text-center mb-4">
               <span className="text-yellow-400 font-bold">{voteInfo.initiatorName}</span> 发起离开投票
             </p>
+            {voteCountdown > 0 && (
+              <p className="text-orange-400 text-center mb-4 font-bold text-lg">
+                ⏱ {voteCountdown}秒后未投票将自动同意
+              </p>
+            )}
 
             <div className="mb-6">
               <p className="text-white/60 text-sm mb-3">投票进度: {voteInfo.votedPlayers}/{voteInfo.totalPlayers}</p>
@@ -948,7 +1007,7 @@ export default function GamePage() {
                       </span>
                       {vote === true && <span className="text-green-400">✓ 同意</span>}
                       {vote === false && <span className="text-red-400">✗ 拒绝</span>}
-                      {vote === undefined && <span className="text-white/40">等待中...</span>}
+                      {vote === undefined && <span className="text-white/40">等待中{voteCountdown > 0 ? ` (${voteCountdown}s)` : '...'}</span>}
                     </div>
                   )
                 })}
@@ -981,8 +1040,8 @@ export default function GamePage() {
           </div>
         )}
         {!isConnected && !isReconnecting && (
-          <div className="bg-red-800 text-white text-center py-2 text-sm font-bold">
-            ❌ 连接已断开，请刷新页面
+          <div className="bg-red-800 text-white text-center py-3 text-sm font-bold">
+            ❌ 连接已断开，请刷新页面重新进入游戏
           </div>
         )}
         <div className="flex justify-between items-center px-2 md:px-4 py-1 md:py-2 bg-black/30">
@@ -1061,7 +1120,7 @@ export default function GamePage() {
           )}
           <div className="flex-1 relative">
           <div className="absolute inset-0 flex items-center justify-center p-1 md:p-4">
-            <div className="relative w-full max-w-3xl aspect-[4/3] md:aspect-[16/10]">
+            <div className="relative" style={{ aspectRatio: '16/10', maxWidth: '48rem', maxHeight: '100%', width: '100%', height: 'auto' }}>
               <div className="absolute inset-[8%] bg-green-800/80 rounded-[50%] border-8 border-green-700 shadow-2xl">
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
                   <div className="text-yellow-300 font-bold text-sm md:text-lg mb-0.5 md:mb-1">
