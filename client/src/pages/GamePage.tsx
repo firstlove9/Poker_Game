@@ -78,6 +78,7 @@ export default function GamePage() {
   const [dicePlayers, setDicePlayers] = useState<{ id: string; name: string }[]>([])
   const [runItTwiceBoard, setRunItTwiceBoard] = useState<Card[][]>([])
   const [runItTwiceResults, setRunItTwiceResults] = useState<RunItTwiceRoundResult[]>([])
+  const [isAfk, setIsAfk] = useState(false)
 
   const addLog = useCallback((playerName: string, action: string, amount?: number, phase?: string) => {
     setActionLogs(prev => [...prev, {
@@ -147,6 +148,7 @@ export default function GamePage() {
       setRunItTwiceResults([])
       const meInRoom = data.room?.players?.find((p: any) => p.id === myPlayerId)
       setIsReady(meInRoom?.isReady || false)
+      if (meInRoom?.isAfk !== undefined) setIsAfk(meInRoom.isAfk)
       setIsWaitingForStart(false)
       setActionLogs([])
       addLog('系统', 'deal', undefined, data.gameState?.phase || 'pre-flop')
@@ -216,12 +218,22 @@ export default function GamePage() {
       }
     }
 
+    const handleAfkStatusChanged = (data: any) => {
+      if (data.room) {
+        setCurrentRoom(data.room)
+      }
+      if (data.playerId === myPlayerId) {
+        setIsAfk(data.isAfk)
+      }
+    }
+
     const handleRoomUpdated = (data: any) => {
       if (data.room) {
         setCurrentRoom(data.room)
         const me = data.room.players?.find((p: any) => p.id === myPlayerId)
         if (me) {
           setIsReady(me.isReady || false)
+          if (me.isAfk !== undefined) setIsAfk(me.isAfk)
         }
       }
     }
@@ -455,6 +467,7 @@ export default function GamePage() {
     on(ServerEvents.RUN_IT_TWICE_DICE_RESULT, handleRunItTwiceDiceResult)
     on(ServerEvents.RUN_IT_TWICE_EXECUTING, handleRunItTwiceExecuting)
     on(ServerEvents.GAME_OVER, handleGameOver)
+    on(ServerEvents.AFK_STATUS_CHANGED, handleAfkStatusChanged)
 
     fetchGameState()
 
@@ -479,6 +492,7 @@ export default function GamePage() {
       off(ServerEvents.RUN_IT_TWICE_DICE_RESULT, handleRunItTwiceDiceResult)
       off(ServerEvents.RUN_IT_TWICE_EXECUTING, handleRunItTwiceExecuting)
       off(ServerEvents.GAME_OVER, handleGameOver)
+      off(ServerEvents.AFK_STATUS_CHANGED, handleAfkStatusChanged)
     }
   }, [roomId, myPlayerId])
 
@@ -634,6 +648,20 @@ export default function GamePage() {
     }
   }
 
+  const handleAfk = async () => {
+    try {
+      const newAfk = !isAfk
+      const result = await emit(ClientEvents.AFK, { afk: newAfk })
+      if (result?.success) {
+        setIsAfk(newAfk)
+      } else {
+        addToast(result?.error || '设置AFK状态失败', 'error')
+      }
+    } catch (error: any) {
+      addToast(error.message || '设置AFK状态失败', 'error')
+    }
+  }
+
   const handleReady = async () => {
     if (isSubmitting) return
     setIsSubmitting(true)
@@ -770,6 +798,8 @@ export default function GamePage() {
   const myPlayerRole = myPlayer?.playerRoomRole
   const isBusted = myPlayerRole === 'busted'
   const isSpectatorFromBust = myPlayerRole === 'spectator'
+  const isAfkSpectator = isAfk && (myPlayerRole === 'active' || myPlayerRole === 'seated' || myPlayerRole === 'busted')
+  const showRebuyButton = isBusted && !isAfk
   const myPlayerNeedVote = myPlayerRole === 'active'
     && currentRoom?.status === 'playing'
     && myPlayerId
@@ -1229,6 +1259,13 @@ export default function GamePage() {
                   全押 ${myChips}
                 </button>
               )}
+              <button
+                onClick={handleAfk}
+                className="px-2 md:px-3 py-1.5 md:py-2 bg-gray-600 text-white/70 rounded-lg hover:bg-gray-500 transition-colors text-xs md:text-sm"
+                title="临时离开"
+              >
+                ☕ AFK
+              </button>
             </div>
             {showRaiseSlider && (
               <div className="px-2 md:px-4 py-1.5 md:py-2 bg-gray-800 rounded-lg">
@@ -1288,10 +1325,17 @@ export default function GamePage() {
         {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && !amIInCurrentGame && (
           <div className="bg-gray-900/90 border-t border-gray-700 p-2 md:p-3">
             <div className="text-center text-yellow-300 text-xs md:text-sm">
-              {isSpectatorFromBust ? '👁️ 你正在观战' : '⏳ 当前局进行中，请等待本局结束后加入'}
+              {isAfkSpectator ? '☕ 你处于AFK状态' : isSpectatorFromBust ? '👁️ 你正在观战' : '⏳ 当前局进行中，请等待本局结束后加入'}
             </div>
             <div className="flex justify-center gap-2 md:gap-3 mt-1.5 md:mt-2">
-              {isSpectatorFromBust ? (
+              {isAfkSpectator ? (
+                <button
+                  onClick={handleAfk}
+                  className="px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs md:text-sm"
+                >
+                  🔄 回来
+                </button>
+              ) : isSpectatorFromBust ? (
                 <>
                   <button
                     onClick={handleRebuy}
@@ -1315,9 +1359,27 @@ export default function GamePage() {
             </div>
           </div>
         )}
-        {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && amIInCurrentGame && (
-          <div className="text-center text-white/40 text-xs md:text-sm py-2 md:py-3 bg-black/30">
-            等待其他玩家行动...
+        {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && amIInCurrentGame && !isAfk && (
+          <div className="flex items-center justify-center gap-2 py-2 md:py-3 bg-black/30">
+            <span className="text-white/40 text-xs md:text-sm">等待其他玩家行动...</span>
+            <button
+              onClick={handleAfk}
+              className="px-2 md:px-3 py-1 bg-gray-600 text-white/70 rounded-lg hover:bg-gray-500 transition-colors text-xs md:text-sm"
+              title="临时离开"
+            >
+              ☕ AFK
+            </button>
+          </div>
+        )}
+        {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && amIInCurrentGame && isAfk && (
+          <div className="flex items-center justify-center gap-2 py-2 md:py-3 bg-black/30">
+            <span className="text-yellow-300 text-xs md:text-sm">☕ 你处于AFK状态</span>
+            <button
+              onClick={handleAfk}
+              className="px-2 md:px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-xs md:text-sm"
+            >
+              🔄 回来
+            </button>
           </div>
         )}
 
@@ -1337,16 +1399,25 @@ export default function GamePage() {
               <div className="flex gap-1.5 md:gap-2">
                 {isGameOver ? (
                   <span className="text-yellow-400 text-xs md:text-sm self-center">🏆 游戏已结束</span>
-                ) : isBusted || isSpectatorFromBust ? (
+                ) : isAfkSpectator ? (
+                  <button
+                    onClick={handleAfk}
+                    className="px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs md:text-sm"
+                  >
+                    🔄 回来
+                  </button>
+                ) : showRebuyButton || isSpectatorFromBust ? (
                   <>
-                    <button
-                      onClick={handleRebuy}
-                      disabled={isSubmitting}
-                      className={`px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      补筹码
-                    </button>
-                    {isBusted && (
+                    {showRebuyButton && (
+                      <button
+                        onClick={handleRebuy}
+                        disabled={isSubmitting}
+                        className={`px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        补筹码
+                      </button>
+                    )}
+                    {isBusted && !isAfk && (
                       <button
                         onClick={handleDeclineRebuy}
                         disabled={isSubmitting}
@@ -1731,16 +1802,25 @@ export default function GamePage() {
               <div className="flex gap-2 md:gap-3">
                 {isGameOver ? (
                   <span className="text-yellow-400 text-sm md:text-lg self-center">🏆 游戏已结束</span>
-                ) : isBusted || isSpectatorFromBust ? (
+                ) : isAfkSpectator ? (
+                  <button
+                    onClick={handleAfk}
+                    className="flex-1 px-4 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg"
+                  >
+                    🔄 回来
+                  </button>
+                ) : showRebuyButton || isSpectatorFromBust ? (
                   <>
-                    <button
-                      onClick={handleRebuy}
-                      disabled={isSubmitting}
-                      className={`flex-1 px-4 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      补筹码
-                    </button>
-                    {isBusted && (
+                    {showRebuyButton && (
+                      <button
+                        onClick={handleRebuy}
+                        disabled={isSubmitting}
+                        className={`flex-1 px-4 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        补筹码
+                      </button>
+                    )}
+                    {isBusted && !isAfk && (
                       <button
                         onClick={handleDeclineRebuy}
                         disabled={isSubmitting}

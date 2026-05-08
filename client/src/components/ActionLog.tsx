@@ -149,7 +149,7 @@ function renderCommunityCards(text: string) {
           {g.cards.map((card, ci) => {
             const parsed = parseCardStr(card)
             if (parsed) {
-              return <span key={ci} className={parsed.suit.color}>{parsed.rank}{parsed.suit.symbol}</span>
+              return <span key={ci} className={`${parsed.suit.color} text-sm font-bold`}>{parsed.rank}<span className="text-base">{parsed.suit.symbol}</span></span>
             }
             return <span key={ci}>{card}</span>
           })}
@@ -165,7 +165,7 @@ function renderCards(text: string) {
     if (part.trim() === '') return part
     const parsed = parseCardStr(part)
     if (parsed) {
-      return <span key={i} className={parsed.suit.color}>{parsed.rank}{parsed.suit.symbol}</span>
+      return <span key={i} className={`${parsed.suit.color} text-sm font-bold`}>{parsed.rank}<span className="text-base">{parsed.suit.symbol}</span></span>
     }
     return <span key={i}>{part}</span>
   })
@@ -179,7 +179,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
 
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+      scrollRef.current.scrollTop = 0
     }
   }, [logs, handResults, activeTab])
 
@@ -207,7 +207,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
           logs.length === 0 ? (
             <div className="text-white/30 text-center py-4">暂无行动记录</div>
           ) : (
-            logs.map((log) => (
+            [...logs].reverse().map((log) => (
               <div key={log.id} className="flex items-start gap-1.5 py-1 px-1.5 rounded bg-white/5 hover:bg-white/10 transition-colors">
                 <span className="text-sm flex-shrink-0">{EMOJIS[log.action] || '📌'}</span>
                 <div className="flex-1 min-w-0">
@@ -229,7 +229,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
           handResults.length === 0 ? (
             <div className="text-white/30 text-center py-4">暂无牌局结果</div>
           ) : (
-            handResults.map((result) => (
+            [...handResults].reverse().map((result) => (
               <div key={result.id} className="py-1.5 px-2 rounded border bg-white/5 border-white/10">
                 {result.isRunItTwice && result.runItTwiceRounds ? (
                   <>
@@ -274,7 +274,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                             <span className="text-yellow-300 font-bold">+${p.winAmount}</span>
                           )}
                           {p.holeCards && (
-                            <span className="font-mono text-[11px]">{renderCards(p.holeCards)}</span>
+                            <span className="font-mono text-xs">{renderCards(p.holeCards)}</span>
                           )}
                         </div>
                       ))}
@@ -298,7 +298,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                             <span className="text-yellow-300 font-bold">+${p.winAmount}</span>
                           )}
                           {p.holeCards && (
-                            <span className="font-mono text-[11px]">{renderCards(p.holeCards)}</span>
+                            <span className="font-mono text-xs">{renderCards(p.holeCards)}</span>
                           )}
                           <span className="text-sm" title={p.handRank}>{HAND_RANK_ICONS[p.handRank] || '🃏'}</span>
                         </div>

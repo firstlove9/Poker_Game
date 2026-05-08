@@ -67,6 +67,8 @@ export interface RoomPlayer {
   isReady: boolean;
   isOnline: boolean;
   isNpc?: boolean;
+  isAfk: boolean;
+  afkAt?: number;
   joinedAt: number;
   hasPlayedHand?: boolean;
   disconnectedAt?: number;

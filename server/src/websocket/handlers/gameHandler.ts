@@ -5,6 +5,7 @@ import { ClientEvents, ServerEvents } from '../../types/events';
 import { PlayerAction, GamePhase, RunItTwiceChoice } from '../../types/poker';
 import { RoomStatus, PlayerRoomRole, RoomPlayer } from '../../types/room';
 import { addActionLog, loadRoomLogs } from '../../room/ActionLogManager';
+import { handlePlayerTurnWithAfk } from './roomHandler';
 
 export const gameEngines: Map<string, GameEngine> = new Map();
 
@@ -209,6 +210,56 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
             gameState: sanitizeGameState(gameState),
             players: nonFoldedPlayers.map((p: any) => ({ id: p.id, name: p.name })),
           });
+
+          for (const p of nonFoldedPlayers) {
+            if (p.isAfk) {
+              const afkChoiceResult = gameEngine.submitRunItTwiceChoice(p.id, 'once');
+              if (afkChoiceResult.success) {
+                const afkActor = room.players.find((rp: any) => rp.id === p.id);
+                io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_CHOICE_RESULT, {
+                  playerId: p.id,
+                  playerName: afkActor?.name || p.id,
+                  choice: 'once',
+                  gameState: sanitizeGameState(gameEngine.getState()),
+                });
+
+                if (afkChoiceResult.bothSubmitted) {
+                  room.gameState = gameEngine.getState();
+                  if (afkChoiceResult.needDice) {
+                    io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_DICE_RESULT, {
+                      gameState: sanitizeGameState(gameEngine.getState()),
+                      needDice: true,
+                      players: room.players
+                        .filter((rp: any) => gameState.playerStatus?.[rp.id] !== 'folded')
+                        .map((rp: any) => ({ id: rp.id, name: rp.name })),
+                    });
+                  } else {
+                    const finalChoice = afkChoiceResult.finalChoice || 'once';
+                    io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_EXECUTING, {
+                      finalChoice,
+                      gameState: sanitizeGameState(gameEngine.getState()),
+                    });
+
+                    const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
+                    const finalGameState = gameEngine.getState();
+                    room.gameState = finalGameState;
+                    syncPlayerChipsToRoom(gameEngine, room);
+
+                    for (const w of winners) {
+                      const roomPlayer = room.players.find((rp: any) => rp.id === w.playerId);
+                      if (roomPlayer) w.playerName = roomPlayer.name;
+                    }
+                    for (const h of allHands) {
+                      const roomPlayer = room.players.find((rp: any) => rp.id === h.playerId);
+                      if (roomPlayer) h.playerName = roomPlayer.name;
+                    }
+
+                    finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io);
+                  }
+                }
+              }
+            }
+          }
         } else if (isGameEnding) {
           const { winners, potResults, allHands } = gameEngine.showdown();
 
@@ -234,22 +285,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
         } else {
           const currentPlayerId = gameEngine.getCurrentPlayerId();
           if (currentPlayerId) {
-            const currentPlayer = room.players.find(p => p.id === currentPlayerId);
-            if (currentPlayer) {
-              io.to(roomId).emit(ServerEvents.PLAYER_TURN, {
-                playerId: currentPlayerId,
-                playerName: currentPlayer.name,
-                timeout: 30,
-                validActions: gameEngine.getValidActions(currentPlayerId),
-              });
-            } else {
-              io.to(roomId).emit(ServerEvents.PLAYER_TURN, {
-                playerId: currentPlayerId,
-                playerName: currentPlayerId,
-                timeout: 30,
-                validActions: gameEngine.getValidActions(currentPlayerId),
-              });
-            }
+            handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
           } else {
             const playingPlayers = room.players.filter((p: any) =>
               gameState.playerStatus?.[p.id] === 'playing'
@@ -543,6 +579,7 @@ function sanitizeRoom(room: any): any {
       totalBuyIn: p.totalBuyIn,
       isReady: p.isReady,
       isOnline: p.isOnline,
+      isAfk: p.isAfk,
       hasPlayedHand: p.hasPlayedHand,
       playerRoomRole: p.playerRoomRole,
     })),

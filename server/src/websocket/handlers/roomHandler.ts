@@ -2,7 +2,7 @@ import { Socket, Server } from 'socket.io';
 import { RoomManager } from '../../room/RoomManager';
 import { ClientEvents, ServerEvents } from '../../types/events';
 import { CreateRoomRequest, JoinRoomRequest, RoomStatus, PlayerRoomRole } from '../../types/room';
-import { Card } from '../../types/poker';
+import { Card, PlayerAction, PlayerStatus } from '../../types/poker';
 import { GameEngine, GameConfig } from '../../game/GameEngine';
 import { gameEngines } from './gameHandler';
 import { cleanupRoomLogs } from '../../room/ActionLogManager';
@@ -18,7 +18,7 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
   if (!room || room.status === RoomStatus.PLAYING) return false;
 
   const readyPlayers = room.players.filter(p =>
-    p.isReady && p.chips > 0 && p.playerRoomRole !== PlayerRoomRole.SPECTATOR
+    p.isReady && p.chips > 0 && p.playerRoomRole !== PlayerRoomRole.SPECTATOR && !p.isAfk
   );
   if (readyPlayers.length < room.config.minPlayers) return false;
 
@@ -91,13 +91,7 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
 
   const currentPlayerId = gameEngine.getCurrentPlayerId();
   if (currentPlayerId) {
-    const currentPlayer = room.players.find(p => p.id === currentPlayerId);
-    io.to(roomId).emit(ServerEvents.PLAYER_TURN, {
-      playerId: currentPlayerId,
-      playerName: currentPlayer?.name || currentPlayerId,
-      timeout: 30,
-      validActions: gameEngine.getValidActions(currentPlayerId),
-    });
+    handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
   }
 
   return true;
@@ -655,6 +649,76 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
       safeCallback(callback, { success: false, error: '响应投票失败' });
     }
   });
+
+  socket.on(ClientEvents.AFK, (data: { afk: boolean }, callback?: (response: any) => void) => {
+    try {
+      const playerId = socket.data.playerId;
+      if (!playerId) {
+        safeCallback(callback, { success: false, error: '未登录' });
+        return;
+      }
+
+      const afk = data.afk !== false;
+      const result = roomManager.setPlayerAfk(playerId, afk);
+
+      if (result.success && result.roomId && result.room) {
+        const roomId = result.roomId;
+        const room = result.room;
+
+        io.to(roomId).emit(ServerEvents.AFK_STATUS_CHANGED, {
+          playerId,
+          isAfk: afk,
+          room: sanitizeRoom(room),
+        });
+
+        if (afk && room.status === RoomStatus.PLAYING) {
+          const gameEngine = gameEngines.get(roomId);
+          if (gameEngine) {
+            const gameState = gameEngine.getState();
+            const playerStatus = gameState.playerStatus[playerId];
+
+            if (playerStatus === PlayerStatus.PLAYING) {
+              const currentPlayerId = gameEngine.getCurrentPlayerId();
+              if (currentPlayerId === playerId) {
+                const actionResult = gameEngine.performAction(playerId, PlayerAction.FOLD);
+                if (actionResult.success) {
+                  room.gameState = gameEngine.getState();
+                  syncPlayerChipsToRoom(gameEngine, room);
+
+                  const actor = room.players.find(p => p.id === playerId);
+                  io.to(roomId).emit(ServerEvents.ACTION_RESULT, {
+                    playerId,
+                    playerName: actor?.name || playerId,
+                    action: 'fold',
+                    gameState: sanitizeGameState(room.gameState),
+                    room: sanitizeRoom(room),
+                  });
+
+                  const { GamePhase } = require('../../types/poker');
+                  const isGameEnding = room.gameState.phase === GamePhase.SHOWDOWN || room.gameState.phase === GamePhase.ENDED;
+
+                  if (!isGameEnding) {
+                    const nextPlayerId = gameEngine.getCurrentPlayerId();
+                    if (nextPlayerId) {
+                      handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
+                    }
+                  } else {
+                    finishHandFromAfk(roomId, room, gameEngine, io);
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        safeCallback(callback, { success: true, isAfk: afk });
+      } else {
+        safeCallback(callback, { success: false, error: result.error });
+      }
+    } catch (error) {
+      safeCallback(callback, { success: false, error: '设置AFK状态失败' });
+    }
+  });
 }
 
 function syncPlayerChipsToRoom(gameEngine: GameEngine, room: any): void {
@@ -686,8 +750,177 @@ function sanitizeRoom(room: any): any {
       totalBuyIn: p.totalBuyIn,
       isReady: p.isReady,
       isOnline: p.isOnline,
+      isAfk: p.isAfk,
       hasPlayedHand: p.hasPlayedHand,
       playerRoomRole: p.playerRoomRole,
     })),
   };
+}
+
+export function handlePlayerTurnWithAfk(roomId: string, room: any, gameEngine: GameEngine, io: Server, roomManager: RoomManager): void {
+  const currentPlayerId = gameEngine.getCurrentPlayerId();
+  if (!currentPlayerId) return;
+
+  const currentPlayer = room.players.find((p: any) => p.id === currentPlayerId);
+  const gameState = gameEngine.getState();
+  const playerStatus = gameState.playerStatus[currentPlayerId];
+
+  io.to(roomId).emit(ServerEvents.PLAYER_TURN, {
+    playerId: currentPlayerId,
+    playerName: currentPlayer?.name || currentPlayerId,
+    timeout: 30,
+    validActions: gameEngine.getValidActions(currentPlayerId),
+  });
+
+  if (currentPlayer?.isAfk && playerStatus === PlayerStatus.PLAYING) {
+    setTimeout(() => {
+      if (gameEngine.getCurrentPlayerId() !== currentPlayerId) return;
+      if (!roomManager.getRoom(roomId)) return;
+
+      const actionResult = gameEngine.performAction(currentPlayerId, PlayerAction.FOLD);
+      if (actionResult.success) {
+        room.gameState = gameEngine.getState();
+        syncPlayerChipsToRoom(gameEngine, room);
+
+        const actor = room.players.find((p: any) => p.id === currentPlayerId);
+        io.to(roomId).emit(ServerEvents.ACTION_RESULT, {
+          playerId: currentPlayerId,
+          playerName: actor?.name || currentPlayerId,
+          action: 'fold',
+          gameState: sanitizeGameState(room.gameState),
+          room: sanitizeRoom(room),
+        });
+
+        const { GamePhase } = require('../../types/poker');
+        const isGameEnding = room.gameState.phase === GamePhase.SHOWDOWN || room.gameState.phase === GamePhase.ENDED;
+
+        if (!isGameEnding) {
+          const nextPlayerId = gameEngine.getCurrentPlayerId();
+          if (nextPlayerId) {
+            handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
+          }
+        } else {
+          finishHandFromAfk(roomId, room, gameEngine, io);
+        }
+      }
+    }, 1500);
+  }
+}
+
+function finishHandFromAfk(roomId: string, room: any, gameEngine: GameEngine, io: Server): void {
+  const { winners, potResults, allHands } = gameEngine.showdown();
+  const finalGameState = gameEngine.getState();
+  room.gameState = finalGameState;
+  syncPlayerChipsToRoom(gameEngine, room);
+
+  for (const w of winners) {
+    const roomPlayer = room.players.find((p: any) => p.id === w.playerId);
+    if (roomPlayer) w.playerName = roomPlayer.name;
+  }
+  for (const h of allHands) {
+    const roomPlayer = room.players.find((p: any) => p.id === h.playerId);
+    if (roomPlayer) h.playerName = roomPlayer.name;
+  }
+
+  const mergedWinners = (() => {
+    const map = new Map<string, any>();
+    for (const w of winners) {
+      const existing = map.get(w.playerId);
+      if (existing) {
+        existing.winAmount += w.winAmount;
+        if (w.potType === 'side') {
+          existing.potType = 'both';
+        }
+      } else {
+        map.set(w.playerId, { ...w });
+      }
+    }
+    for (const [, mw] of map) {
+      const allHand = allHands.find((h: any) => h.playerId === mw.playerId && h.isWinner);
+      if (allHand && allHand.winAmount !== undefined) {
+        mw.winAmount = allHand.winAmount;
+      }
+    }
+    return Array.from(map.values()).filter((mw: any) => {
+      const allHand = allHands.find((h: any) => h.playerId === mw.playerId);
+      return allHand && allHand.isWinner;
+    });
+  })();
+
+  room.status = RoomStatus.WAITING;
+  const currentGamePlayers = gameEngine.getPlayers();
+  const currentGamePlayerIds = new Set(currentGamePlayers.map(p => p.id));
+  for (const p of room.players) {
+    if (currentGamePlayerIds.has(p.id)) {
+      p.isReady = false;
+    }
+  }
+
+  for (const p of room.players) {
+    if (p.playerRoomRole === PlayerRoomRole.ACTIVE && p.chips <= 0) {
+      p.playerRoomRole = PlayerRoomRole.BUSTED;
+    }
+  }
+
+  const isRunItTwice = finalGameState.runItTwiceResults && finalGameState.runItTwiceResults.length > 0;
+
+  io.to(roomId).emit(ServerEvents.SHOWDOWN, {
+    winners: mergedWinners,
+    potResults,
+    allHands,
+    communityCards: finalGameState.communityCards,
+    gameState: sanitizeGameState(finalGameState),
+    room: sanitizeRoom(room),
+    ...(isRunItTwice ? {
+      runItTwiceBoard: finalGameState.runItTwiceBoard,
+      runItTwiceResults: finalGameState.runItTwiceResults,
+    } : {}),
+  });
+
+  io.to(roomId).emit(ServerEvents.HAND_RESULT, {
+    winners: mergedWinners,
+    potResults,
+    allHands,
+    communityCards: finalGameState.communityCards,
+    room: sanitizeRoom(room),
+    ...(isRunItTwice ? {
+      runItTwiceBoard: finalGameState.runItTwiceBoard,
+      runItTwiceResults: finalGameState.runItTwiceResults,
+    } : {}),
+  });
+
+  room.gameState = {
+    ...room.gameState,
+    currentBet: 0,
+    minRaise: room.config?.bigBlind || 20,
+    roundBets: {},
+    pots: [],
+    totalPot: 0,
+    actions: [],
+    communityCards: [],
+    playerCards: {},
+    playerStatus: {},
+    playerRoles: {},
+    lastRaiseIndex: -1,
+    currentPlayerIndex: -1,
+    currentPlayerId: '',
+    isHeadsUpAllIn: false,
+    runItTwiceChoices: {},
+    runItTwiceDiceResult: null,
+    runItTwiceDiceReady: {},
+    runItTwiceBoard: [],
+    runItTwiceResults: [],
+    lastShowdownResult: {
+      winners: mergedWinners,
+      allHands,
+      communityCards: finalGameState.communityCards,
+      runItTwiceBoard: finalGameState.runItTwiceBoard || [],
+      runItTwiceResults: finalGameState.runItTwiceResults || [],
+    },
+  };
+
+  io.to(roomId).emit(ServerEvents.ROOM_UPDATED, {
+    type: 'updated',
+    room: sanitizeRoom(room),
+  });
 }

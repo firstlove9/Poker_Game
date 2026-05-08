@@ -61,9 +61,15 @@ export default function PlayerSeat({ player, index, isHost, isMe }: PlayerSeatPr
           <p className="text-white font-medium text-xs truncate max-w-[80px]">
             {player.name} {isMe && '(我)'}
           </p>
-          <p className="text-yellow-300 text-xs font-bold">
-            ${player.chips.toLocaleString()}
-          </p>
+          {player.isAfk ? (
+            <p className="text-orange-400 text-xs font-bold">
+              ☕ AFK
+            </p>
+          ) : (
+            <p className="text-yellow-300 text-xs font-bold">
+              ${player.chips.toLocaleString()}
+            </p>
+          )}
         </div>
       </div>
     </motion.div>

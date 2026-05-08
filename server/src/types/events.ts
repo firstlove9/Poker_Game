@@ -13,6 +13,7 @@ export enum ClientEvents {
   RUN_IT_TWICE_CHOICE = 'game:run_it_twice_choice',
   RUN_IT_TWICE_ROLL_DICE = 'game:run_it_twice_roll_dice',
   DECLINE_REBUY = 'room:decline_rebuy',
+  AFK = 'room:afk',
 }
 
 // 服务端 → 客户端 事件
@@ -48,4 +49,5 @@ export enum ServerEvents {
   RUN_IT_TWICE_DICE_RESULT = 'game:run_it_twice_dice_result',
   RUN_IT_TWICE_EXECUTING = 'game:run_it_twice_executing',
   GAME_OVER = 'game:game_over',
+  AFK_STATUS_CHANGED = 'room:afk_status_changed',
 }

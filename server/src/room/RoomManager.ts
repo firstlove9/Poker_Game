@@ -166,6 +166,7 @@ export class RoomManager {
       totalBuyIn: isSpectator ? 0 : room.config.buyInMin,
       isReady: false,
       isOnline: true,
+      isAfk: false,
       joinedAt: Date.now(),
       playerRoomRole,
     };
@@ -411,7 +412,7 @@ export class RoomManager {
     room.voteLeave.votes.set(playerId, true);
 
     for (const p of room.players) {
-      if (p.id !== playerId && !p.isOnline) {
+      if (p.id !== playerId && (!p.isOnline || p.isAfk)) {
         room.voteLeave.votes.set(p.id, true);
       }
     }
@@ -454,11 +455,11 @@ export class RoomManager {
     }
 
     const allVoted = room.players.every(p =>
-      room.voteLeave!.votes.has(p.id) || !p.isOnline
+      room.voteLeave!.votes.has(p.id) || !p.isOnline || p.isAfk
     );
     if (allVoted) {
       for (const p of room.players) {
-        if (!room.voteLeave!.votes.has(p.id) && !p.isOnline) {
+        if (!room.voteLeave!.votes.has(p.id) && (!p.isOnline || p.isAfk)) {
           room.voteLeave.votes.set(p.id, true);
         }
       }
@@ -539,5 +540,35 @@ export class RoomManager {
       room.voteLeaveCooldowns.set(initiatorId, Date.now() + 10000);
       return { success: true, room, approved: false, roomId, voteCounts: { approveCount, rejectCount } };
     }
+  }
+
+  setPlayerAfk(playerId: string, afk: boolean): { success: boolean; error?: string; room?: Room; roomId?: string } {
+    const roomId = this.playerRooms.get(playerId);
+    if (!roomId) {
+      return { success: false, error: '你不在任何房间中' };
+    }
+
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return { success: false, error: '房间不存在' };
+    }
+
+    const player = room.players.find(p => p.id === playerId);
+    if (!player) {
+      return { success: false, error: '玩家不在房间中' };
+    }
+
+    if (player.playerRoomRole === PlayerRoomRole.SPECTATOR) {
+      return { success: false, error: '观战者不能设置AFK' };
+    }
+
+    player.isAfk = afk;
+    player.afkAt = afk ? Date.now() : undefined;
+
+    if (afk) {
+      player.isReady = false;
+    }
+
+    return { success: true, room, roomId };
   }
 }

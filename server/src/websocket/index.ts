@@ -21,6 +21,7 @@ function sanitizeRoom(room: any): any {
       totalBuyIn: p.totalBuyIn,
       isReady: p.isReady,
       isOnline: p.isOnline,
+      isAfk: p.isAfk,
       playerRoomRole: p.playerRoomRole,
     })),
   };
