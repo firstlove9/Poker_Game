@@ -347,7 +347,7 @@ export default function SinglePlayerPage() {
 
   if (!gameState) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-900 to-green-950 flex items-center justify-center">
+      <div className="min-h-[100dvh] bg-gradient-to-br from-green-900 to-green-950 flex items-center justify-center">
         <div className="text-white text-xl animate-pulse">正在初始化游戏...</div>
       </div>
     )
@@ -389,8 +389,8 @@ export default function SinglePlayerPage() {
   const positions = getPlayerPositions(reorderedPlayers.length)
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-900 to-green-950 select-none overflow-hidden">
-      <div className="h-screen flex flex-col">
+    <div className="min-h-[100dvh] bg-gradient-to-br from-green-900 to-green-950 select-none overflow-hidden">
+      <div className="h-[100dvh] flex flex-col">
         <div className="flex justify-between items-center px-4 py-2 bg-black/30">
           <h1 className="text-lg font-bold text-white">单机练习模式</h1>
           <div className="flex gap-2">
@@ -472,7 +472,7 @@ export default function SinglePlayerPage() {
                 const role = gameState.playerRoles[player.id]
                 const bet = gameState.roundBets[player.id] || 0
                 const isFolded = status === 'folded'
-                const isAllIn = status === 'all_in'
+                const isAllIn = status === 'all-in'
 
                 return (
                   <div

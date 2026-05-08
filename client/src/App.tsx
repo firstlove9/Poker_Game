@@ -57,7 +57,7 @@ function App() {
   }, [isConnected])
 
   return (
-    <div className="min-h-screen bg-poker-green-dark">
+    <div className="min-h-[100dvh] bg-poker-green-dark">
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/lobby" element={<LobbyPage />} />

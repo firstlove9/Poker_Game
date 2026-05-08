@@ -20,7 +20,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4">
+    <div className="min-h-[100dvh] flex flex-col items-center justify-center p-4">
       {/* Logo */}
       <motion.div
         initial={{ scale: 0, rotate: -180 }}

@@ -141,8 +141,22 @@ export default function RoomPage() {
         }
       }
     }
+    const handleOnline = () => {
+      if (roomId) {
+        const { socket, isConnected: connected } = useSocketStore.getState()
+        if (!connected && socket && !socket.connected) {
+          socket.connect()
+        } else if (connected) {
+          fetchRoomInfo()
+        }
+      }
+    }
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('online', handleOnline)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('online', handleOnline)
+    }
   }, [roomId, isConnected])
 
   useEffect(() => {
@@ -185,8 +199,9 @@ export default function RoomPage() {
       }
     } catch (error) {
       console.error('Failed to fetch room info:', error)
-      if (retryCount < 3) {
-        setTimeout(() => fetchRoomInfo(retryCount + 1), 2000)
+      if (retryCount < 8) {
+        const delay = Math.min(2000 * Math.pow(1.5, retryCount), 15000)
+        setTimeout(() => fetchRoomInfo(retryCount + 1), delay)
       } else {
         addToast('无法连接服务器，请刷新页面重试', 'error')
       }
@@ -252,7 +267,7 @@ export default function RoomPage() {
 
   if (!currentRoom) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-[100dvh] flex items-center justify-center">
         <div className="text-white text-xl">加载中...</div>
       </div>
     )
@@ -268,7 +283,7 @@ export default function RoomPage() {
   const isSpectator = myRoomPlayer?.playerRoomRole === 'spectator'
 
   return (
-    <div className="min-h-screen p-4 md:p-8">
+    <div className="min-h-[100dvh] p-4 md:p-8">
       {isReconnecting && (
         <div className="bg-red-600 text-white text-center py-2 text-sm font-bold animate-pulse mb-4 rounded-lg">
           ⚠ 连接断开，正在尝试重新连接...
@@ -440,7 +455,7 @@ export default function RoomPage() {
       </div>
 
       {/* 底部操作栏 */}
-      <div className="max-w-4xl mx-auto mt-48 md:mt-0">
+      <div className="max-w-4xl mx-auto mt-16 md:mt-0">
         <div className="glass-panel p-4">
           <div className="flex flex-wrap justify-center gap-4">
             {isSpectator ? (

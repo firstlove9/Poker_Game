@@ -114,7 +114,7 @@ export default function LobbyPage() {
   const validRooms = rooms.filter(room => room && room.config)
 
   return (
-    <div className="min-h-screen p-4 md:p-8">
+    <div className="min-h-[100dvh] p-4 md:p-8">
       <div className="max-w-6xl mx-auto mb-8">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <div>

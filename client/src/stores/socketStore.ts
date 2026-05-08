@@ -81,10 +81,10 @@ export const useSocketStore = create<SocketState>((set, get) => ({
     const socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       reconnection: true,
-      reconnectionAttempts: 20,
+      reconnectionAttempts: 50,
       reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      timeout: 20000,
+      reconnectionDelayMax: 8000,
+      timeout: 25000,
       query: savedPlayerId ? { playerId: savedPlayerId } : {},
     })
 

@@ -47,6 +47,7 @@ export default function GamePage() {
     } catch { return [] }
   })
   const [showActionLog, setShowActionLog] = useState(() => window.innerWidth >= 768)
+  const [showMobileChat, setShowMobileChat] = useState(false)
   const [allHands, setAllHands] = useState<PlayerHandInfo[]>([])
   const [resultCommunityCards, setResultCommunityCards] = useState<Card[]>([])
   const [isReady, setIsReady] = useState(false)
@@ -265,6 +266,23 @@ export default function GamePage() {
         clearSavedRoom()
         reset()
         navigate('/lobby')
+        return
+      }
+      if (data.isTemporary && data.playerId) {
+        const playerName = data.room?.players?.find((p: any) => p.id === data.playerId)?.name || '玩家'
+        addToast(`${playerName} 连接中断，正在尝试重连...`, 'info')
+      }
+    }
+
+    const handlePlayerJoined = (data: any) => {
+      if (data.room) {
+        setCurrentRoom(data.room)
+      }
+      if (data.player && data.player.id !== myPlayerId) {
+        const prevPlayer = currentRoom?.players?.find((p: any) => p.id === data.player.id)
+        if (prevPlayer && !prevPlayer.isOnline) {
+          addToast(`${data.player.name} 已重新连接`, 'success')
+        }
       }
     }
 
@@ -483,6 +501,7 @@ export default function GamePage() {
     on(ServerEvents.CHIPS_RECEIVED, handleChipsReceived)
     on(ServerEvents.ROOM_UPDATED, handleRoomUpdated)
     on(ServerEvents.PLAYER_LEFT, handlePlayerLeft)
+    on(ServerEvents.PLAYER_JOINED, handlePlayerJoined)
     on(ServerEvents.PLAYER_READY_CHANGED, handlePlayerReadyChanged)
     on(ServerEvents.ROOM_CLOSED, handleRoomClosed)
     on(ServerEvents.VOTE_LEAVE_STARTED, handleVoteLeaveStarted)
@@ -508,6 +527,7 @@ export default function GamePage() {
       off(ServerEvents.CHIPS_RECEIVED, handleChipsReceived)
       off(ServerEvents.ROOM_UPDATED, handleRoomUpdated)
       off(ServerEvents.PLAYER_LEFT, handlePlayerLeft)
+      off(ServerEvents.PLAYER_JOINED, handlePlayerJoined)
       off(ServerEvents.PLAYER_READY_CHANGED, handlePlayerReadyChanged)
       off(ServerEvents.ROOM_CLOSED, handleRoomClosed)
       off(ServerEvents.VOTE_LEAVE_STARTED, handleVoteLeaveStarted)
@@ -542,8 +562,27 @@ export default function GamePage() {
         }
       }
     }
+    const handleOnline = () => {
+      if (roomId) {
+        const { socket, isConnected: connected } = useSocketStore.getState()
+        if (!connected && socket && !socket.connected) {
+          socket.connect()
+        } else if (connected) {
+          fetchGameState()
+        }
+      }
+    }
+    const handleOffline = () => {
+      console.log('Network offline')
+    }
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
   }, [roomId, isConnected])
 
   const fetchGameState = async (retryCount = 0) => {
@@ -611,8 +650,9 @@ export default function GamePage() {
       }
     } catch (error) {
       console.error('Failed to fetch game state:', error)
-      if (retryCount < 3) {
-        setTimeout(() => fetchGameState(retryCount + 1), 2000)
+      if (retryCount < 8) {
+        const delay = Math.min(2000 * Math.pow(1.5, retryCount), 15000)
+        setTimeout(() => fetchGameState(retryCount + 1), delay)
       } else {
         addToast('无法连接服务器，请刷新页面重试', 'error')
       }
@@ -623,10 +663,8 @@ export default function GamePage() {
     const myPlayer = currentRoom?.players?.find((p: any) => p.id === myPlayerId)
     const role = myPlayer?.playerRoomRole
     const needVote = role === 'active'
-      && currentRoom?.status === 'playing'
       && myPlayerId
-      && currentRoom?.gameState?.playerStatus?.[myPlayerId] !== undefined
-      && currentRoom?.gameState?.playerStatus?.[myPlayerId] !== 'folded'
+      && (currentRoom?.status === 'playing' || (currentRoom?.status === 'waiting' && gameState?.phase === 'ended'))
 
     if (needVote) {
       try {
@@ -816,6 +854,7 @@ export default function GamePage() {
       'river': '河牌',
       'showdown': '摊牌',
       'ended': '已结束',
+      'run-it-twice-choice': '跑马轮次确定',
     }
     return map[phase] || phase
   }
@@ -831,18 +870,18 @@ export default function GamePage() {
 
   const getPlayerPositions = (total: number) => {
     const positions = [
-      { x: 50, y: 95 },
-      { x: 8, y: 55 },
-      { x: 25, y: 5 },
-      { x: 75, y: 5 },
-      { x: 92, y: 55 },
-      { x: 50, y: 5 },
-      { x: 5, y: 28 },
-      { x: 95, y: 28 },
-      { x: 5, y: 82 },
-      { x: 95, y: 82 },
-      { x: 25, y: 95 },
-      { x: 75, y: 95 },
+      { x: 50, y: 88 },
+      { x: 10, y: 42 },
+      { x: 25, y: 8 },
+      { x: 75, y: 8 },
+      { x: 90, y: 42 },
+      { x: 50, y: 8 },
+      { x: 6, y: 22 },
+      { x: 94, y: 22 },
+      { x: 6, y: 58 },
+      { x: 94, y: 58 },
+      { x: 28, y: 88 },
+      { x: 72, y: 88 },
     ]
     return positions.slice(0, total)
   }
@@ -855,14 +894,12 @@ export default function GamePage() {
   const isAfkSpectator = isAfk && (myPlayerRole === 'active' || myPlayerRole === 'seated' || myPlayerRole === 'busted')
   const showRebuyButton = isBusted && !isAfk
   const myPlayerNeedVote = myPlayerRole === 'active'
-    && currentRoom?.status === 'playing'
     && myPlayerId
-    && currentRoom?.gameState?.playerStatus?.[myPlayerId] !== undefined
-    && currentRoom?.gameState?.playerStatus?.[myPlayerId] !== 'folded'
+    && (currentRoom?.status === 'playing' || (currentRoom?.status === 'waiting' && gameState?.phase === 'ended'))
 
   if (!currentRoom) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-900 to-green-950 flex items-center justify-center">
+      <div className="min-h-[100dvh] bg-gradient-to-br from-green-900 to-green-950 flex items-center justify-center">
         <div className="text-white text-xl animate-pulse">加载游戏...</div>
       </div>
     )
@@ -870,8 +907,8 @@ export default function GamePage() {
 
   if (!gameState) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-900 to-green-950 select-none overflow-hidden">
-        <div className="h-screen flex flex-col">
+      <div className="h-[100dvh] bg-gradient-to-br from-green-900 to-green-950 select-none overflow-hidden">
+        <div className="h-full flex flex-col">
           <div className="flex justify-between items-center px-4 py-2 bg-black/30">
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-bold text-white">{currentRoom.config.roomName}</h1>
@@ -977,7 +1014,7 @@ export default function GamePage() {
   const initialChips = currentRoom.config.buyInMin
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-900 to-green-950 select-none overflow-hidden">
+    <div className="h-[100dvh] bg-gradient-to-br from-green-900 to-green-950 select-none overflow-hidden">
       {showVoteModal && voteInfo && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
           <div className="bg-gray-800 border border-gray-600 rounded-xl w-full max-w-md p-6">
@@ -1033,7 +1070,7 @@ export default function GamePage() {
           </div>
         </div>
       )}
-      <div className="h-screen flex flex-col">
+      <div className="h-full flex flex-col">
         {isReconnecting && (
           <div className="bg-red-600 text-white text-center py-2 text-sm font-bold animate-pulse">
             ⚠ 连接断开，正在尝试重新连接...
@@ -1123,11 +1160,27 @@ export default function GamePage() {
             <div className="relative" style={{ aspectRatio: '16/10', maxWidth: '48rem', maxHeight: '100%', width: '100%', height: 'auto' }}>
               <div className="absolute inset-[8%] bg-green-800/80 rounded-[50%] border-8 border-green-700 shadow-2xl">
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <div className="text-yellow-300 font-bold text-sm md:text-lg mb-0.5 md:mb-1">
-                    {getPhaseName(gameState.phase)}
-                  </div>
-                  <div className="text-white font-bold text-base md:text-xl mb-1 md:mb-2">
-                    底池: ${totalPot}
+                  <div className="bg-black/40 rounded-lg px-3 py-1.5 md:px-5 md:py-2.5 backdrop-blur-sm border border-white/10 mb-1 md:mb-2">
+                    <div className="flex items-center justify-center gap-2 md:gap-4">
+                      <div className="flex flex-col items-center">
+                        <span className="text-white/50 text-[8px] md:text-[10px]">阶段</span>
+                        <span className="text-yellow-300 font-bold text-xs md:text-sm">{getPhaseName(gameState.phase)}</span>
+                      </div>
+                      <div className="w-px h-6 md:h-8 bg-white/20" />
+                      <div className="flex flex-col items-center">
+                        <span className="text-white/50 text-[8px] md:text-[10px]">底池</span>
+                        <span className="text-white font-bold text-sm md:text-lg">${totalPot}</span>
+                      </div>
+                      {(gameState.currentBet || 0) > 0 && (
+                        <>
+                          <div className="w-px h-6 md:h-8 bg-white/20" />
+                          <div className="flex flex-col items-center">
+                            <span className="text-white/50 text-[8px] md:text-[10px]">当前注</span>
+                            <span className="text-orange-300 font-bold text-xs md:text-sm">${gameState.currentBet}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                   {(() => {
                     const boardCount = variantRule.boardCount || 1
@@ -1176,9 +1229,6 @@ export default function GamePage() {
                       </div>
                     )
                   })()}
-                  {(gameState.currentBet || 0) > 0 && (
-                    <div className="text-white/70 text-xs md:text-sm">当前注: ${gameState.currentBet}</div>
-                  )}
                 </div>
               </div>
 
@@ -1190,7 +1240,7 @@ export default function GamePage() {
                 const role = gameState.playerRoles?.[player.id]
                 const bet = gameState.roundBets?.[player.id] || 0
                 const isFolded = status === 'folded'
-                const isAllIn = status === 'all_in'
+                const isAllIn = status === 'all-in'
 
                 return (
                   <div
@@ -1201,42 +1251,53 @@ export default function GamePage() {
                     style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
                   >
                     <div className="flex flex-col items-center">
-                      {bet > 0 && (
-                        <div className="text-yellow-300 text-[10px] md:text-xs font-bold mb-0.5 md:mb-1 bg-black/50 px-1.5 md:px-2 py-0.5 rounded">
-                          ${bet}
-                        </div>
-                      )}
-                      <div className={`relative ${isCurrentTurn && !isFolded ? 'ring-2 ring-yellow-400 rounded-full' : ''}`}>
-                        <div className={`w-8 h-8 md:w-12 md:h-12 rounded-full flex items-center justify-center text-white font-bold text-xs md:text-sm ${
-                          isMe ? 'bg-green-600' : 'bg-gray-600'
-                        }`}>
-                          {player.name[0]}
-                        </div>
-                        {role && getRoleName(role) && (
-                          <div className="absolute -top-1 -left-1 w-4 h-4 md:w-5 md:h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold">
-                            {getRoleName(role)}
+                      <div className="bg-black/40 backdrop-blur-sm rounded-lg px-1.5 py-1 md:px-2 md:py-1.5 border border-white/10">
+                        <div className="flex items-center gap-1 md:gap-1.5">
+                          <div className={`relative ${isCurrentTurn && !isFolded ? 'ring-2 ring-yellow-400 rounded-full' : ''}`}>
+                            <div className={`w-8 h-8 md:w-12 md:h-12 rounded-full flex items-center justify-center text-white font-bold text-xs md:text-sm ${
+                              isMe ? 'bg-green-600' : 'bg-gray-600'
+                            }`}>
+                              {player.name[0]}
+                            </div>
+                            {role && getRoleName(role) && (
+                              <div className="absolute -top-1 -left-1 w-4 h-4 md:w-5 md:h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold">
+                                {getRoleName(role)}
+                              </div>
+                            )}
+                            {isAllIn && (
+                              <div className="absolute -top-1 -right-1 bg-red-600 text-white text-[6px] md:text-[8px] px-0.5 md:px-1 rounded-full font-bold">
+                                ALL IN
+                              </div>
+                            )}
+                            {isWaitingForStart && player.isReady && (
+                              <div className="absolute -bottom-1 -right-1 w-4 h-4 md:w-5 md:h-5 bg-green-500 text-white rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold shadow">
+                                ✓
+                              </div>
+                            )}
                           </div>
-                        )}
-                        {isAllIn && (
-                          <div className="absolute -top-1 -right-1 bg-red-600 text-white text-[6px] md:text-[8px] px-0.5 md:px-1 rounded-full font-bold">
-                            ALL IN
+                          <div className="flex flex-col min-w-0">
+                            <div className="text-white text-[9px] md:text-[11px] font-bold truncate max-w-[50px] md:max-w-[70px]">
+                              {player.name}{isMe ? '(你)' : ''}
+                            </div>
+                            {!player.isOnline ? (
+                              <div className="text-orange-400 text-[8px] md:text-[10px] font-bold">⚡断线</div>
+                            ) : (
+                              <div className="text-yellow-300 text-[9px] md:text-[11px] font-bold">${player.chips}</div>
+                            )}
+                            {bet > 0 && (
+                              <div className="text-yellow-200 text-[8px] md:text-[10px] font-bold bg-yellow-600/30 px-1 rounded">
+                                下注 ${bet}
+                              </div>
+                            )}
+                            {isFolded && <div className="text-red-400 text-[8px] md:text-[10px]">弃牌</div>}
+                            {!isFolded && !isCurrentTurn && player.isOnline && !isMe && !isAllIn && (
+                              <div className="text-green-400/70 text-[7px] md:text-[9px]">在线</div>
+                            )}
+                            {isCurrentTurn && !isFolded && !isMe && (
+                              <div className="text-yellow-400 text-[8px] md:text-[10px] animate-pulse">思考中</div>
+                            )}
                           </div>
-                        )}
-                        {isWaitingForStart && player.isReady && (
-                          <div className="absolute -bottom-1 -right-1 w-4 h-4 md:w-5 md:h-5 bg-green-500 text-white rounded-full flex items-center justify-center text-[8px] md:text-[10px] font-bold shadow">
-                            ✓
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-center mt-0.5">
-                        <div className="text-white text-[9px] md:text-[11px] font-bold truncate max-w-[50px] md:max-w-[70px]">
-                          {player.name}{isMe ? '(你)' : ''}
                         </div>
-                        <div className="text-yellow-300 text-[9px] md:text-[11px] font-bold">${player.chips}</div>
-                        {isFolded && <div className="text-red-400 text-[8px] md:text-[10px]">弃牌</div>}
-                        {isCurrentTurn && !isFolded && !isMe && (
-                          <div className="text-yellow-400 text-[8px] md:text-[10px] animate-pulse">思考中</div>
-                        )}
                       </div>
                       {isMe && myCards && (
                         <div className="flex gap-0.5 md:gap-1 mt-0.5 md:mt-1">
@@ -1252,11 +1313,11 @@ export default function GamePage() {
                           })}
                         </div>
                       )}
-                      {!isMe && status === 'playing' && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && (
+                      {!isMe && (status === 'playing' || status === 'all-in') && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && (
                         <div className="flex gap-0.5 md:gap-1 mt-0.5 md:mt-1">
                           {Array.from({ length: VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].holeCardCount }).map((_, ci) => (
-                            <div key={ci} className="w-8 h-12 md:w-14 md:h-20 bg-gradient-to-br from-blue-700 to-blue-900 rounded-lg border-2 border-blue-400 flex items-center justify-center shadow-md">
-                              <span className="text-blue-300 text-xs md:text-lg">?</span>
+                            <div key={ci} className="w-6 h-9 md:w-10 md:h-14 bg-gradient-to-br from-blue-700 to-blue-900 rounded-lg border border-blue-400 flex items-center justify-center shadow-md">
+                              <span className="text-blue-300 text-[8px] md:text-sm">?</span>
                             </div>
                           ))}
                         </div>
@@ -1274,7 +1335,23 @@ export default function GamePage() {
           <div className="hidden md:block w-64 flex-shrink-0">
             <ChatBox />
           </div>
+          {showMobileChat && (
+            <div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setShowMobileChat(false)}>
+              <div className="absolute right-0 top-0 bottom-0 w-72" onClick={e => e.stopPropagation()}>
+                <ChatBox />
+              </div>
+            </div>
+          )}
         </div>
+
+        {!showMobileChat && (
+          <button
+            onClick={() => setShowMobileChat(true)}
+            className="md:hidden fixed right-2 bottom-20 z-30 w-10 h-10 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-blue-700 active:scale-95"
+          >
+            💬
+          </button>
+        )}
 
         {message && (
           <div className="text-center text-red-400 text-sm py-1 bg-black/30">{message}</div>
@@ -1335,7 +1412,7 @@ export default function GamePage() {
               )}
             </div>
             {showRaiseSlider && (
-              <div className="px-2 md:px-4 py-1.5 md:py-2 bg-gray-800 rounded-lg">
+              <div className="px-2 md:px-4 py-2 md:py-2 bg-gray-800 rounded-lg">
                 {variantRule.isPotLimit && (
                   <div className="text-center text-white/40 text-[10px] md:text-xs mb-1">
                     底池限注 · 最大加注 ${potLimitMaxRaise}
@@ -1349,30 +1426,30 @@ export default function GamePage() {
                   max={maxRaise}
                   value={raiseAmount}
                   onChange={(e) => setRaiseAmount(parseInt(e.target.value))}
-                  className="flex-1 accent-yellow-400"
+                  className="flex-1 accent-yellow-400 h-6 md:h-auto"
                 />
                 <div className="flex gap-1">
                   <button
                     onClick={() => setRaiseAmount(minRaise)}
-                    className="px-1.5 md:px-2 py-0.5 md:py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
+                    className="px-2 md:px-2 py-1 md:py-1 bg-white/10 rounded text-white/80 text-xs md:text-xs hover:bg-white/20 min-w-[32px]"
                   >
                     Min
                   </button>
                   <button
                     onClick={() => setRaiseAmount(Math.max(minRaise, Math.floor(totalPot / 2)))}
-                    className="px-1.5 md:px-2 py-0.5 md:py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
+                    className="px-2 md:px-2 py-1 md:py-1 bg-white/10 rounded text-white/80 text-xs md:text-xs hover:bg-white/20 min-w-[32px]"
                   >
                     1/2
                   </button>
                   <button
                     onClick={() => setRaiseAmount(Math.max(minRaise, totalPot))}
-                    className="px-1.5 md:px-2 py-0.5 md:py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
+                    className="px-2 md:px-2 py-1 md:py-1 bg-white/10 rounded text-white/80 text-xs md:text-xs hover:bg-white/20 min-w-[32px]"
                   >
                     满池
                   </button>
                   <button
                     onClick={() => setRaiseAmount(myChips)}
-                    className="px-1.5 md:px-2 py-0.5 md:py-1 bg-purple-600/40 rounded text-white/80 text-[10px] md:text-xs hover:bg-purple-600/60"
+                    className="px-2 md:px-2 py-1 md:py-1 bg-purple-600/40 rounded text-white/80 text-xs md:text-xs hover:bg-purple-600/60 min-w-[32px]"
                   >
                     All-in
                   </button>
@@ -1633,23 +1710,80 @@ export default function GamePage() {
 
         {showResult && allHands && allHands.length > 0 && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-2 md:p-4">
-            <div className="bg-gray-800 rounded-xl p-3 md:p-6 max-w-lg w-full mx-2 md:mx-4 border border-gray-600 max-h-[90vh] md:max-h-[85vh] overflow-y-auto">
-              <h2 className="text-xl md:text-2xl font-bold text-white text-center mb-3 md:mb-4">🏆 本局结束</h2>
+            <div className="bg-gray-800 rounded-xl p-3 md:p-6 max-w-lg w-full mx-2 md:mx-4 border border-gray-600 max-h-[90vh] md:max-h-[85vh] flex flex-col">
+              <h2 className="text-xl md:text-2xl font-bold text-white text-center mb-2 md:mb-3">🏆 本局结束</h2>
+
+              <div className="flex gap-2 md:gap-3 mb-3 md:mb-4">
+                {isGameOver ? (
+                  <span className="text-yellow-400 text-sm md:text-lg self-center">🏆 游戏已结束</span>
+                ) : showRebuyButton ? (
+                  <>
+                    <button
+                      onClick={handleRebuy}
+                      disabled={isSubmitting}
+                      className={`flex-1 px-3 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      补筹码
+                    </button>
+                    {isBusted && !isAfk && (
+                      <button
+                        onClick={handleDeclineRebuy}
+                        disabled={isSubmitting}
+                        className={`flex-1 px-3 md:px-6 py-2 md:py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        不补（观战）
+                      </button>
+                    )}
+                    {isSpectatorFromBust && (
+                      <span className="text-yellow-400 text-sm md:text-lg self-center">👁️ 观战中</span>
+                    )}
+                  </>
+                ) : (
+                  <button
+                    onClick={handleReady}
+                    disabled={isSubmitting}
+                    className={`flex-1 px-3 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    准备下一局
+                  </button>
+                )}
+                <button
+                  onClick={isInVoteCooldown ? undefined : handleLeaveGame}
+                  disabled={isInVoteCooldown}
+                  className={`px-3 md:px-6 py-2 md:py-3 text-white rounded-lg font-bold text-sm md:text-lg ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
+                >
+                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerNeedVote ? '投票离开' : '离开')}
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto min-h-0">
 
               {resultCommunityCards.length > 0 && !(runItTwiceBoard && runItTwiceBoard.length === 2) && (
                 <div className="mb-3 md:mb-4 p-2 md:p-3 bg-blue-900/30 rounded-lg border border-blue-600/30">
                   <p className="text-white/60 text-[10px] md:text-xs mb-1 md:mb-2 text-center">公共牌</p>
-                  <div className="flex gap-1 md:gap-1.5 justify-center">
-                    {resultCommunityCards.map((card, i) => {
+                  <div className="flex gap-1 md:gap-1.5 justify-center items-center">
+                    {(() => {
                       const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
-                      const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                      const renderResultCard = (card: Card, idx: number) => {
+                        const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                        return (
+                          <div key={idx} className={`w-8 h-12 md:w-11 md:h-16 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
+                            <span className="font-bold text-[10px] md:text-sm">{card.rank}</span>
+                            <span className="text-xs md:text-base">{suitSymbol[card.suit]}</span>
+                          </div>
+                        )
+                      }
+                      const cards = resultCommunityCards
                       return (
-                        <div key={i} className={`w-8 h-12 md:w-11 md:h-16 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
-                          <span className="font-bold text-[10px] md:text-sm">{card.rank}</span>
-                          <span className="text-xs md:text-base">{suitSymbol[card.suit]}</span>
-                        </div>
+                        <>
+                          {cards.slice(0, 3).map((c, i) => renderResultCard(c, i))}
+                          {cards.length > 3 && <span className="text-white/30 mx-0.5 md:mx-1">|</span>}
+                          {cards.length > 3 && cards.slice(3, 4).map((c, i) => renderResultCard(c, i + 3))}
+                          {cards.length > 4 && <span className="text-white/30 mx-0.5 md:mx-1">|</span>}
+                          {cards.length > 4 && cards.slice(4, 5).map((c, i) => renderResultCard(c, i + 4))}
+                        </>
                       )
-                    })}
+                    })()}
                   </div>
                 </div>
               )}
@@ -1734,6 +1868,8 @@ export default function GamePage() {
                 <div className="space-y-1.5 md:space-y-2 mb-3 md:mb-4">
                   {allHands.map((hand, i) => {
                     const isMe = hand.playerId === myPlayerId
+                    const wasAllIn = currentRoom?.gameState?.playerStatus?.[hand.playerId] === 'all-in'
+                    const profit = hand.netWin !== undefined ? hand.netWin : 0
                     return (
                       <div key={i} className={`p-2 md:p-3 rounded-lg border ${
                         hand.isWinner
@@ -1748,6 +1884,11 @@ export default function GamePage() {
                             <span className={`font-bold text-xs md:text-sm ${hand.isWinner ? 'text-yellow-300' : 'text-white'}`}>
                               {hand.playerName} {isMe ? '(你)' : ''}
                             </span>
+                            {wasAllIn && (
+                              <span className="text-[8px] md:text-[10px] px-1 py-0.5 rounded bg-red-600/60 text-red-200 font-bold border border-red-500/40">
+                                ALL IN
+                              </span>
+                            )}
                             {hand.isWinner && hand.potType && hand.potType !== 'main' && (
                               <span className="text-[8px] md:text-xs px-1 md:px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-300 border border-purple-600/30">
                                 {hand.potType === 'both' ? '主池+边池' : '边池'}
@@ -1776,9 +1917,9 @@ export default function GamePage() {
                                 {hand.handRank}
                               </span>
                             )}
-                            {hand.isWinner && hand.winAmount !== undefined && (
-                              <span className="text-green-400 font-bold text-[10px] md:text-sm">
-                                +${hand.winAmount}
+                            {profit !== 0 && (
+                              <span className={`font-bold text-[10px] md:text-sm ${profit > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {profit > 0 ? '+' : ''}{profit}
                               </span>
                             )}
                           </div>
@@ -1797,11 +1938,11 @@ export default function GamePage() {
                               )
                             })}
                             {hand.roundHandRanks && hand.roundHandRanks.length === 2 ? (
-                              <span className="text-white/50 text-[8px] md:text-xs ml-1 md:ml-2">
+                              <span className="text-white/70 text-[10px] md:text-sm font-bold ml-1 md:ml-2">
                                 → {hand.handDescription}
                               </span>
                             ) : hand.handDescription && hand.handRank !== '弃牌' && hand.handRank !== '其他玩家弃牌' ? (
-                              <span className="text-white/50 text-[8px] md:text-xs ml-1 md:ml-2">→ {hand.handDescription}</span>
+                              <span className="text-white/70 text-[10px] md:text-sm font-bold ml-1 md:ml-2">→ {hand.handDescription}</span>
                             ) : null}
                           </div>
                         )}
@@ -1853,56 +1994,6 @@ export default function GamePage() {
                 })}
               </div>
 
-              <div className="flex gap-2 md:gap-3">
-                {isGameOver ? (
-                  <span className="text-yellow-400 text-sm md:text-lg self-center">🏆 游戏已结束</span>
-                ) : isAfkSpectator ? (
-                  <button
-                    onClick={handleAfk}
-                    className="flex-1 px-4 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg"
-                  >
-                    🔄 回来
-                  </button>
-                ) : showRebuyButton || isSpectatorFromBust ? (
-                  <>
-                    {showRebuyButton && (
-                      <button
-                        onClick={handleRebuy}
-                        disabled={isSubmitting}
-                        className={`flex-1 px-4 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        补筹码
-                      </button>
-                    )}
-                    {isBusted && !isAfk && (
-                      <button
-                        onClick={handleDeclineRebuy}
-                        disabled={isSubmitting}
-                        className={`flex-1 px-4 md:px-6 py-2 md:py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        不补（观战）
-                      </button>
-                    )}
-                    {isSpectatorFromBust && (
-                      <span className="text-yellow-400 text-sm md:text-lg self-center">👁️ 观战中</span>
-                    )}
-                  </>
-                ) : (
-                  <button
-                    onClick={handleReady}
-                    disabled={isSubmitting}
-                    className={`flex-1 px-4 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    准备下一局
-                  </button>
-                )}
-                <button
-                  onClick={isInVoteCooldown ? undefined : handleLeaveGame}
-                  disabled={isInVoteCooldown}
-                  className={`px-4 md:px-6 py-2 md:py-3 text-white rounded-lg font-bold text-sm md:text-lg ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
-                >
-                  {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerNeedVote ? '投票离开' : '离开')}
-                </button>
               </div>
             </div>
           </div>
