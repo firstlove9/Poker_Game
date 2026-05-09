@@ -806,6 +806,8 @@ function decideAfkAction(gameEngine: GameEngine, playerId: string): { action: st
   const isPair = cards && cards.length >= 2 && cards[0].rank === cards[1].rank;
   const bigBlind = gameState.minRaise || 20;
 
+  const callAmount = Math.min(toCall, myChips);
+
   if (toCall === 0) {
     if (isPair && random < 0.4 && validActions.includes('raise') && myChips > bigBlind * 3) {
       return { action: 'raise', amount: Math.min(bigBlind * 3, myChips) };
@@ -824,7 +826,7 @@ function decideAfkAction(gameEngine: GameEngine, playerId: string): { action: st
 
   if (isPair) {
     if (random < 0.6 && validActions.includes('call')) {
-      return { action: 'call' };
+      return { action: 'call', amount: callAmount };
     }
     if (random < 0.8 && validActions.includes('raise') && myChips > toCall * 2) {
       return { action: 'raise', amount: Math.min(toCall * 2, myChips) };
@@ -833,16 +835,16 @@ function decideAfkAction(gameEngine: GameEngine, playerId: string): { action: st
 
   if (hasHighCard) {
     if (toCall <= myChips * 0.3 && random < 0.5 && validActions.includes('call')) {
-      return { action: 'call' };
+      return { action: 'call', amount: callAmount };
     }
     if (random < 0.35 && validActions.includes('call')) {
-      return { action: 'call' };
+      return { action: 'call', amount: callAmount };
     }
   }
 
   if (toCall > myChips * 0.5) {
     if (random < 0.15 && validActions.includes('call')) {
-      return { action: 'call' };
+      return { action: 'call', amount: callAmount };
     }
     if (validActions.includes('fold')) {
       return { action: 'fold' };
@@ -854,7 +856,7 @@ function decideAfkAction(gameEngine: GameEngine, playerId: string): { action: st
   }
 
   if (random < 0.35 && validActions.includes('call')) {
-    return { action: 'call' };
+    return { action: 'call', amount: callAmount };
   }
 
   if (validActions.includes('fold')) {

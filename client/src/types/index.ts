@@ -334,6 +334,7 @@ export interface GameState {
   currentBet: number;
   minRaise: number;
   roundBets: Record<string, number>;
+  totalBets: Record<string, number>;
   playerStatus: Record<string, string>;
   playerRoles: Record<string, string>;
   isHeadsUpAllIn?: boolean;
@@ -372,6 +373,7 @@ export interface PlayerHandInfo {
   potType?: 'main' | 'side' | 'both';
   netWin?: number;
   roundHandRanks?: string[];
+  initialChips?: number;
 }
 
 export enum ClientEvents {

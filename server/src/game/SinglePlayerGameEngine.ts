@@ -78,6 +78,7 @@ export class SinglePlayerGameEngine {
       currentBet: 0,
       minRaise: gameConfig.bigBlind,
       roundBets: {},
+      totalBets: {},
       playerCards: {},
       playerStatus: Object.fromEntries(playerIds.map(id => [id, PlayerStatus.WAITING])),
       playerRoles: {},
@@ -223,12 +224,14 @@ export class SinglePlayerGameEngine {
       const sbAmount = Math.min(this.config.smallBlind, sb.chips);
       sb.chips -= sbAmount;
       this.state.roundBets[sb.id] = sbAmount;
+      this.state.totalBets[sb.id] = sbAmount;
     }
     
     if (bb) {
       const bbAmount = Math.min(this.config.bigBlind, bb.chips);
       bb.chips -= bbAmount;
       this.state.roundBets[bb.id] = bbAmount;
+      this.state.totalBets[bb.id] = bbAmount;
       this.state.currentBet = bbAmount;
     }
     
@@ -420,6 +423,12 @@ export class SinglePlayerGameEngine {
     }
     
     this.actionCount++;
+    
+    const newBet = this.state.roundBets[player.id] || 0;
+    const betDiff = newBet - myBet;
+    if (betDiff > 0) {
+      this.state.totalBets[player.id] = (this.state.totalBets[player.id] || 0) + betDiff;
+    }
     
     this.state.actions.push({
       playerId,

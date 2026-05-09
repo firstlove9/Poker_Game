@@ -179,6 +179,7 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
             currentBet: 0,
             minRaise: room.config?.bigBlind || 20,
             roundBets: {},
+            totalBets: {},
             pots: [],
             totalPot: 0,
             actions: [],
@@ -288,6 +289,7 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
     currentBet: 0,
     minRaise: room.config?.bigBlind || 20,
     roundBets: {},
+    totalBets: {},
     pots: [],
     totalPot: 0,
     actions: [],
@@ -361,6 +363,10 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
         return;
       }
 
+      const preActionState = gameEngine.getState();
+      const preActionBet = preActionState.roundBets[playerId] || 0;
+      const preActionChips = gameEngine.getPlayers().find(p => p.id === playerId)?.chips || 0;
+
       const result = gameEngine.performAction(playerId, playerAction, data.amount);
 
       if (result.success) {
@@ -369,10 +375,20 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
 
         syncPlayerChipsToRoom(gameEngine, room);
 
+        let actualAmount = data.amount;
+        if (data.action.toLowerCase() === 'call') {
+          actualAmount = Math.min(preActionState.currentBet - preActionBet, preActionChips);
+        } else if (data.action.toLowerCase() === 'all-in' || data.action.toLowerCase() === 'allin') {
+          actualAmount = preActionChips;
+        } else if (!actualAmount && data.action.toLowerCase() !== 'fold' && data.action.toLowerCase() !== 'check') {
+          const postActionBet = gameState.roundBets[playerId] || 0;
+          actualAmount = postActionBet - preActionBet;
+        }
+
         const actor = room.players.find((p: any) => p.id === playerId);
         if (actor) {
           loadRoomLogs(roomId);
-          addActionLog(roomId, gameState.handId || '', playerId, actor.name, data.action, data.amount, gameState.phase);
+          addActionLog(roomId, gameState.handId || '', playerId, actor.name, data.action, actualAmount, gameState.phase);
         }
 
         const isGameEnding = gameState.phase === GamePhase.SHOWDOWN || gameState.phase === GamePhase.ENDED;
@@ -382,7 +398,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
           playerId,
           playerName: actor?.name || playerId,
           action: data.action,
-          amount: data.amount,
+          amount: actualAmount,
           gameState: sanitizeGameState(gameState),
           ...(isGameEnding ? {} : { room: sanitizeRoom(room) }),
         });

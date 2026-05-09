@@ -16,6 +16,8 @@ export interface HandResultPlayer {
   winAmount?: number
   holeCards: string
   handRank: string
+  netWin?: number
+  initialChips?: number
 }
 
 export interface RunItTwiceRoundInfo {
@@ -77,6 +79,8 @@ const PHASE_NAMES: Record<string, string> = {
   'turn': '转牌',
   'river': '河牌',
   'showdown': '摊牌',
+  'run-it-twice-choice': '跑马选择',
+  'run-it-twice-dice': '掷骰子',
 }
 
 const PHASE_COLORS: Record<string, string> = {
@@ -85,6 +89,8 @@ const PHASE_COLORS: Record<string, string> = {
   'turn': 'text-purple-400',
   'river': 'text-red-400',
   'showdown': 'text-yellow-400',
+  'run-it-twice-choice': 'text-yellow-400',
+  'run-it-twice-dice': 'text-purple-400',
 }
 
 const HAND_RANK_LABELS: Record<string, string> = {
@@ -100,6 +106,14 @@ const HAND_RANK_LABELS: Record<string, string> = {
   '高牌': '🃏高牌',
   '弃牌': '🛑弃牌',
   '胜出': '🏆胜出',
+}
+
+function formatHandRank(handRank: string): string {
+  if (!handRank) return '🃏高牌'
+  if (handRank.includes(' / ')) {
+    return handRank.split(' / ').map(r => HAND_RANK_LABELS[r] || r).join(' / ')
+  }
+  return HAND_RANK_LABELS[handRank] || '🃏高牌'
 }
 
 const SUIT_INFO: Record<string, { symbol: string; isRed: boolean }> = {
@@ -260,10 +274,15 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                     <>
                       {result.runItTwiceRounds.map((round, ri) => (
                         <div key={ri} className={ri > 0 ? 'border-t border-white/10' : ''}>
-                          <div className="px-2 py-0.5 bg-purple-500/10 text-purple-300 font-bold text-[10px]">第{ri + 1}轮</div>
+                          <div className="px-2 py-0.5 bg-purple-500/10 flex items-center gap-1">
+                            <span className="text-purple-300 font-bold text-[10px]">第{ri + 1}轮</span>
+                            {round.communityCards && (
+                              <span className="inline-flex items-center gap-0.5">{renderCommunityCards(round.communityCards)}</span>
+                            )}
+                          </div>
                           <table className="w-full">
                             <tbody>
-                              {result.players.map((p, pi) => {
+                              {result.players.filter(p => round.handRanks[p.playerId]).map((p, pi) => {
                                 const isRoundWinner = round.winnerIds.includes(p.playerId)
                                 const rank = round.handRanks[p.playerId] || ''
                                 return (
@@ -274,7 +293,10 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                                       {isRoundWinner && <div className="text-yellow-300 font-bold text-[10px]">+${round.winAmount}</div>}
                                     </td>
                                     <td className="py-1 px-1 text-right">
-                                      {rank && <span className="text-cyan-300/80 text-[10px]">{rank}</span>}
+                                      <div className="flex flex-col items-end gap-0.5">
+                                        {p.holeCards && renderPokerCards(p.holeCards)}
+                                        {rank && <span className="text-cyan-300/80 text-[10px]">{HAND_RANK_LABELS[rank] || rank}</span>}
+                                      </div>
                                     </td>
                                   </tr>
                                 )
@@ -292,14 +314,19 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                                 <td className="py-1 px-1.5 w-5 text-center">{p.isWinner ? '🏆' : ''}</td>
                                 <td className="py-1 px-1">
                                   <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}</div>
-                                  {p.isWinner && p.winAmount !== undefined && p.winAmount > 0 && (
-                                    <div className="text-yellow-300 font-bold text-[10px]">+${p.winAmount}</div>
+                                  {p.initialChips !== undefined && (
+                                    <div className="text-white/40 text-[9px]">带入 ${p.initialChips}</div>
                                   )}
                                 </td>
                                 <td className="py-1 px-1 text-right">
                                   <div className="flex flex-col items-end gap-0.5">
                                     {p.holeCards && renderPokerCards(p.holeCards)}
-                                    <span className="text-cyan-300/80 text-[10px]" title={p.handRank}>{HAND_RANK_LABELS[p.handRank] || '🃏高牌'}</span>
+                                    <span className="text-cyan-300/80 text-[10px]" title={p.handRank}>{formatHandRank(p.handRank)}</span>
+                                    {p.netWin !== undefined && p.netWin !== 0 && (
+                                      <span className={`font-bold text-[10px] ${p.netWin > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                        {p.netWin > 0 ? '+' : ''}{p.netWin}
+                                      </span>
+                                    )}
                                   </div>
                                 </td>
                               </tr>
@@ -316,14 +343,19 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                             <td className="py-1 px-1.5 w-5 text-center">{p.isWinner ? '🏆' : ''}</td>
                             <td className="py-1 px-1">
                               <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}</div>
-                              {p.isWinner && p.winAmount !== undefined && p.winAmount > 0 && (
-                                <div className="text-yellow-300 font-bold text-[10px]">+${p.winAmount}</div>
+                              {p.initialChips !== undefined && (
+                                <div className="text-white/40 text-[9px]">带入 ${p.initialChips}</div>
                               )}
                             </td>
                             <td className="py-1 px-1 text-right">
                               <div className="flex flex-col items-end gap-0.5">
                                 {p.holeCards && renderPokerCards(p.holeCards)}
-                                <span className="text-cyan-300/80 text-[10px]" title={p.handRank}>{HAND_RANK_LABELS[p.handRank] || '🃏高牌'}</span>
+                                <span className="text-cyan-300/80 text-[10px]" title={p.handRank}>{formatHandRank(p.handRank)}</span>
+                                {p.netWin !== undefined && p.netWin !== 0 && (
+                                  <span className={`font-bold text-[10px] ${p.netWin > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                    {p.netWin > 0 ? '+' : ''}{p.netWin}
+                                  </span>
+                                )}
                               </div>
                             </td>
                           </tr>

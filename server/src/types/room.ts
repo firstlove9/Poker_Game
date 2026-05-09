@@ -131,6 +131,7 @@ export interface GameState {
   currentBet: number;
   minRaise: number;
   roundBets: Record<string, number>;
+  totalBets: Record<string, number>;
   playerCards: Record<string, Card[]>;
   playerStatus: Record<string, PlayerStatus>;
   playerRoles: Record<string, PlayerRole>;
@@ -189,6 +190,7 @@ export interface PlayerHandInfo {
   potType?: 'main' | 'side' | 'both';
   netWin?: number;
   roundHandRanks?: string[];
+  initialChips?: number;
 }
 
 export interface PotResult {

@@ -85,6 +85,7 @@ export class GameEngine {
       currentBet: 0,
       minRaise: config.bigBlind,
       roundBets: {},
+      totalBets: {},
       playerCards: {},
       playerStatus: Object.fromEntries(playerIds.map(id => [id, PlayerStatus.WAITING])),
       playerRoles: {},
@@ -114,6 +115,7 @@ export class GameEngine {
     this.state.pots = [];
     this.state.totalPot = 0;
     this.state.roundBets = {};
+    this.state.totalBets = {};
     this.state.currentBet = 0;
     this.state.lastRaiseIndex = -1;
     this.state.actions = [];
@@ -176,6 +178,7 @@ export class GameEngine {
       const sbAmount = Math.min(this.config.smallBlind, sb.chips);
       sb.chips -= sbAmount;
       this.state.roundBets[sb.id] = sbAmount;
+      this.state.totalBets[sb.id] = sbAmount;
       if (sb.chips === 0) {
         this.state.playerStatus[sb.id] = PlayerStatus.ALL_IN;
       }
@@ -185,6 +188,7 @@ export class GameEngine {
       const bbAmount = Math.min(this.config.bigBlind, bb.chips);
       bb.chips -= bbAmount;
       this.state.roundBets[bb.id] = bbAmount;
+      this.state.totalBets[bb.id] = bbAmount;
       this.state.currentBet = bbAmount;
       if (bb.chips === 0) {
         this.state.playerStatus[bb.id] = PlayerStatus.ALL_IN;
@@ -306,6 +310,12 @@ export class GameEngine {
     }
 
     this.actionCount++;
+
+    const newBet = this.state.roundBets[player.id] || 0;
+    const betDiff = newBet - myBet;
+    if (betDiff > 0) {
+      this.state.totalBets[player.id] = (this.state.totalBets[player.id] || 0) + betDiff;
+    }
 
     this.state.actions.push({
       playerId,
@@ -714,6 +724,7 @@ export class GameEngine {
         potType: isWinner ? 'both' : undefined,
         netWin,
         roundHandRanks,
+        initialChips,
       });
     }
 
@@ -730,6 +741,7 @@ export class GameEngine {
         handDescription: '弃牌',
         isWinner: false,
         netWin: fp.chips - initialChips,
+        initialChips,
       });
     }
 
@@ -1160,6 +1172,7 @@ export class GameEngine {
         isWinner: true,
         winAmount: netWin,
         netWin,
+        initialChips,
       });
 
       const foldedPlayers = this.players.filter(p =>
@@ -1175,6 +1188,7 @@ export class GameEngine {
           handDescription: '弃牌',
           isWinner: false,
           netWin: fp.chips - initialChips,
+          initialChips,
         });
       }
 
@@ -1326,6 +1340,7 @@ export class GameEngine {
         winAmount: isWinner ? netWin : undefined,
         potType,
         netWin,
+        initialChips,
       });
     }
 
@@ -1342,6 +1357,7 @@ export class GameEngine {
         handDescription: '弃牌',
         isWinner: false,
         netWin: fp.chips - initialChips,
+        initialChips,
       });
     }
 
@@ -1481,6 +1497,7 @@ export class GameEngine {
         isWinner,
         winAmount: isWinner ? netWin : undefined,
         netWin,
+        initialChips,
       });
     }
 
@@ -1497,6 +1514,7 @@ export class GameEngine {
         handDescription: '弃牌',
         isWinner: false,
         netWin: fp.chips - initialChips,
+        initialChips,
       });
     }
 

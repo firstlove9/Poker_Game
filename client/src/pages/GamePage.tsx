@@ -564,6 +564,8 @@ export default function GamePage() {
             winAmount: h.isWinner ? h.winAmount : undefined,
             holeCards: cardsStr,
             handRank: h.handRank || '',
+            netWin: h.netWin,
+            initialChips: h.initialChips,
           }
         })
         const isRunItTwice = !!(data.runItTwiceBoard && data.runItTwiceBoard.length > 0)
@@ -978,7 +980,8 @@ export default function GamePage() {
       'river': '河牌',
       'showdown': '摊牌',
       'ended': '已结束',
-      'run-it-twice-choice': '跑马轮次确定',
+      'run-it-twice-choice': '跑马选择',
+      'run-it-twice-dice': '掷骰子',
     }
     return map[phase] || phase
   }
@@ -1382,7 +1385,7 @@ export default function GamePage() {
                 const isCurrentTurn = player.id === gameState.currentPlayerId
                 const status = gameState.playerStatus?.[player.id]
                 const role = gameState.playerRoles?.[player.id]
-                const bet = gameState.roundBets?.[player.id] || 0
+                const totalBet = gameState.totalBets?.[player.id] || 0
                 const isFolded = status === 'folded'
                 const isAllIn = status === 'all-in'
                 const isInGame = status !== undefined
@@ -1444,9 +1447,9 @@ export default function GamePage() {
                             ) : (
                               <div className="text-yellow-300 text-[9px] md:text-[11px] font-bold">${player.chips}</div>
                             )}
-                            {isInGame && bet > 0 && (
+                            {isInGame && totalBet > 0 && (
                               <div className="text-yellow-200 text-[8px] md:text-[10px] font-bold bg-yellow-600/30 px-1 rounded">
-                                下注 ${bet}
+                                本局 ${totalBet}
                               </div>
                             )}
                             {isInGame && isFolded && <div className="text-red-400 text-[8px] md:text-[10px]">弃牌</div>}
@@ -1690,7 +1693,7 @@ export default function GamePage() {
           <div className="text-center text-red-400 text-sm py-1 bg-black/30">{message}</div>
         )}
 
-        {isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && (
+        {isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && gameState.phase !== 'run-it-twice-choice' && gameState.phase !== 'run-it-twice-dice' && (
           <div className="bg-gray-900/90 border-t border-gray-700 p-2 md:p-3">
             <div className="text-center text-white/60 text-xs md:text-sm mb-1 md:mb-2">
               轮到你行动 {toCall > 0 ? `(需跟注 $${toCall})` : '(可以过牌)'}
@@ -1799,7 +1802,7 @@ export default function GamePage() {
           </div>
         )}
 
-        {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && !amIInCurrentGame && (
+        {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && gameState.phase !== 'run-it-twice-choice' && gameState.phase !== 'run-it-twice-dice' && !amIInCurrentGame && (
           <div className="bg-gray-900/90 border-t border-gray-700 p-2 md:p-3">
             <div className="text-center text-yellow-300 text-xs md:text-sm">
               {isAfkSpectator ? '☕ 你处于AFK状态' : isSpectatorFromBust ? '👁️ 你正在观战' : '⏳ 当前局进行中，请等待本局结束后加入'}
@@ -1836,12 +1839,12 @@ export default function GamePage() {
             </div>
           </div>
         )}
-        {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && amIInCurrentGame && !isAfk && (
+        {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && gameState.phase !== 'run-it-twice-choice' && gameState.phase !== 'run-it-twice-dice' && amIInCurrentGame && !isAfk && (
           <div className="flex items-center justify-center gap-2 py-2 md:py-3 bg-black/30">
             <span className="text-white/40 text-xs md:text-sm">等待其他玩家行动...</span>
           </div>
         )}
-        {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && amIInCurrentGame && isAfk && (
+        {!isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && gameState.phase !== 'run-it-twice-choice' && gameState.phase !== 'run-it-twice-dice' && amIInCurrentGame && isAfk && (
           <div className="flex items-center justify-center gap-2 py-2 md:py-3 bg-black/30">
             <span className="text-yellow-300 text-xs md:text-sm">☕ 你处于AFK状态</span>
           </div>
