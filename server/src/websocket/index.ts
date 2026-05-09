@@ -157,6 +157,23 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
           if (player) {
             player.isOnline = false;
             player.disconnectedAt = Date.now();
+            if (room.status === RoomStatus.PLAYING && !player.isAfk) {
+              player.isAfk = true;
+              const { GamePhase } = require('../types/poker');
+              if (room.gameState && room.gameState.currentPlayerId === playerId &&
+                  room.gameState.phase !== GamePhase.SHOWDOWN && room.gameState.phase !== GamePhase.ENDED) {
+                const gameEngine = gameEngines.get(roomId);
+                if (gameEngine) {
+                  const { handlePlayerTurnWithAfk } = require('./handlers/roomHandler');
+                  handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
+                }
+              }
+              io.to(roomId).emit(ServerEvents.PLAYER_READY_CHANGED, {
+                playerId,
+                ready: player.isReady,
+                room: sanitizeRoom(room),
+              });
+            }
             io.to(roomId).emit(ServerEvents.PLAYER_LEFT, {
               playerId,
               room: sanitizeRoom(room),

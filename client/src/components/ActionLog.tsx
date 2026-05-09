@@ -18,6 +18,7 @@ export interface HandResultPlayer {
   handRank: string
   netWin?: number
   initialChips?: number
+  position?: string
 }
 
 export interface RunItTwiceRoundInfo {
@@ -288,6 +289,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                                 return (
                                   <tr key={pi} className={`border-t border-white/5 ${isRoundWinner ? 'bg-green-500/10' : ''}`}>
                                     <td className="py-1 px-1.5 w-5 text-center">{isRoundWinner ? '🏆' : ''}</td>
+                                    <td className="py-1 px-0.5 w-5 text-center text-[10px] text-yellow-400/70 font-bold">{p.position || ''}</td>
                                     <td className="py-1 px-1">
                                       <div className={`font-medium ${isRoundWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}</div>
                                       {isRoundWinner && <div className="text-yellow-300 font-bold text-[10px]">+${round.winAmount}</div>}
@@ -312,6 +314,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                             {result.players.map((p, pi) => (
                               <tr key={pi} className={`border-t border-white/5 ${p.isWinner ? 'bg-green-500/10' : ''}`}>
                                 <td className="py-1 px-1.5 w-5 text-center">{p.isWinner ? '🏆' : ''}</td>
+                                <td className="py-1 px-0.5 w-5 text-center text-[10px] text-yellow-400/70 font-bold">{p.position || ''}</td>
                                 <td className="py-1 px-1">
                                   <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}</div>
                                   {p.initialChips !== undefined && (
@@ -341,6 +344,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                         {result.players.map((p, pi) => (
                           <tr key={pi} className={`border-t border-white/5 ${p.isWinner ? 'bg-green-500/10' : ''}`}>
                             <td className="py-1 px-1.5 w-5 text-center">{p.isWinner ? '🏆' : ''}</td>
+                            <td className="py-1 px-0.5 w-5 text-center text-[10px] text-yellow-400/70 font-bold">{p.position || ''}</td>
                             <td className="py-1 px-1">
                               <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}</div>
                               {p.initialChips !== undefined && (

@@ -883,7 +883,7 @@ export function handlePlayerTurnWithAfk(roomId: string, room: any, gameEngine: G
     validActions: gameEngine.getValidActions(currentPlayerId),
   });
 
-  if (currentPlayer?.isAfk && playerStatus === PlayerStatus.PLAYING) {
+  if ((currentPlayer?.isAfk || !currentPlayer?.isOnline) && playerStatus === PlayerStatus.PLAYING) {
     setTimeout(() => {
       if (gameEngine.getCurrentPlayerId() !== currentPlayerId) return;
       if (!roomManager.getRoom(roomId)) return;

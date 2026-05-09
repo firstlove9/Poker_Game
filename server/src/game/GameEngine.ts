@@ -725,6 +725,7 @@ export class GameEngine {
         netWin,
         roundHandRanks,
         initialChips,
+        position: this.getPlayerPosition(player.id),
       });
     }
 
@@ -742,6 +743,7 @@ export class GameEngine {
         isWinner: false,
         netWin: fp.chips - initialChips,
         initialChips,
+        position: this.getPlayerPosition(fp.id),
       });
     }
 
@@ -1173,6 +1175,7 @@ export class GameEngine {
         winAmount: netWin,
         netWin,
         initialChips,
+        position: this.getPlayerPosition(winner.id),
       });
 
       const foldedPlayers = this.players.filter(p =>
@@ -1189,6 +1192,7 @@ export class GameEngine {
           isWinner: false,
           netWin: fp.chips - initialChips,
           initialChips,
+          position: this.getPlayerPosition(fp.id),
         });
       }
 
@@ -1341,6 +1345,7 @@ export class GameEngine {
         potType,
         netWin,
         initialChips,
+        position: this.getPlayerPosition(player.id),
       });
     }
 
@@ -1358,6 +1363,7 @@ export class GameEngine {
         isWinner: false,
         netWin: fp.chips - initialChips,
         initialChips,
+        position: this.getPlayerPosition(fp.id),
       });
     }
 
@@ -1498,6 +1504,7 @@ export class GameEngine {
         winAmount: isWinner ? netWin : undefined,
         netWin,
         initialChips,
+        position: this.getPlayerPosition(player.id),
       });
     }
 
@@ -1515,6 +1522,7 @@ export class GameEngine {
         isWinner: false,
         netWin: fp.chips - initialChips,
         initialChips,
+        position: this.getPlayerPosition(fp.id),
       });
     }
 
@@ -1533,6 +1541,15 @@ export class GameEngine {
   getMaxRaise(playerId: string): number {
     if (!this.variantRules.isPotLimit) return Infinity;
     return this.getPotLimitRaise();
+  }
+
+  getPlayerPosition(playerId: string): string {
+    const idx = this.players.findIndex(p => p.id === playerId);
+    if (idx < 0) return '';
+    if (idx === this.state.dealerIndex) return 'D';
+    if (idx === this.state.smallBlindIndex) return 'SB';
+    if (idx === this.state.bigBlindIndex) return 'BB';
+    return '';
   }
 
   getPlayerCards(playerId: string): Card[] | undefined {

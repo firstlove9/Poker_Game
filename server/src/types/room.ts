@@ -191,6 +191,7 @@ export interface PlayerHandInfo {
   netWin?: number;
   roundHandRanks?: string[];
   initialChips?: number;
+  position?: string;
 }
 
 export interface PotResult {

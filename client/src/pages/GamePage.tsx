@@ -566,6 +566,7 @@ export default function GamePage() {
             handRank: h.handRank || '',
             netWin: h.netWin,
             initialChips: h.initialChips,
+            position: h.position,
           }
         })
         const isRunItTwice = !!(data.runItTwiceBoard && data.runItTwiceBoard.length > 0)
@@ -1055,79 +1056,99 @@ export default function GamePage() {
   if (!gameState) {
     return (
       <div className="h-[100dvh] bg-gradient-to-br from-green-900 to-green-950 select-none overflow-hidden">
-        <div className="h-full flex flex-col">
-          <div className="flex justify-between items-center px-4 py-2 bg-black/30">
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-white">{currentRoom.config.roomName}</h1>
-              <span className="text-sm text-white/60">
-                {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].icon}
-                {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].name}
-                {currentRoom.config.gameModifier && currentRoom.config.gameModifier !== GameModifier.NONE && (
-                  <span className="text-red-400">
-                    +{MODIFIER_INFO[currentRoom.config.gameModifier].icon}{MODIFIER_INFO[currentRoom.config.gameModifier].name}
-                  </span>
-                )}
-              </span>
-              <button
-                onClick={() => setShowRuleHelp(true)}
-                className="text-white/40 hover:text-gold"
-                title="查看规则"
-              >
-                <HelpCircle className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={isInVoteCooldown ? undefined : handleLeaveGame}
-                disabled={isInVoteCooldown}
-                className={`px-3 py-1 text-white rounded text-sm ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
-              >
-                {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerNeedVote ? '投票离开' : '离开')}
-              </button>
-            </div>
-          </div>
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-white text-2xl font-bold mb-4">等待玩家准备</div>
-              <div className="text-white/60 text-sm mb-4">所有人准备好后自动开局</div>
-              <div className="space-y-2 mb-6">
-                {currentRoom.players.map((p: any) => (
-                  <div key={p.id} className="flex items-center gap-2 text-lg justify-center">
-                    <span className={p.isReady ? 'text-green-400' : 'text-white/40'}>{p.isReady ? '✅' : '⏳'}</span>
-                    <span className="text-white">{p.name}{p.id === myPlayerId ? '(你)' : ''}</span>
-                  </div>
-                ))}
+        <div className="h-full flex flex-col md:flex-row">
+          <div className="flex-1 flex flex-col min-w-0">
+            <div className="flex justify-between items-center px-4 py-2 bg-black/30">
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold text-white">{currentRoom.config.roomName}</h1>
+                <span className="text-sm text-white/60">
+                  {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].icon}
+                  {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].name}
+                  {currentRoom.config.gameModifier && currentRoom.config.gameModifier !== GameModifier.NONE && (
+                    <span className="text-red-400">
+                      +{MODIFIER_INFO[currentRoom.config.gameModifier].icon}{MODIFIER_INFO[currentRoom.config.gameModifier].name}
+                    </span>
+                  )}
+                </span>
+                <button
+                  onClick={() => setShowRuleHelp(true)}
+                  className="text-white/40 hover:text-gold"
+                  title="查看规则"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                </button>
               </div>
-              <div className="flex gap-3 justify-center">
-                {!isReady && (
-                  <button
-                    onClick={handleReady}
-                    disabled={isSubmitting}
-                    className={`px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    准备
-                  </button>
-                )}
-                {isReady && (
-                  <button
-                    onClick={handleCancelReady}
-                    disabled={isSubmitting}
-                    className={`px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    取消准备
-                  </button>
-                )}
+              <div className="flex gap-2">
                 <button
                   onClick={isInVoteCooldown ? undefined : handleLeaveGame}
                   disabled={isInVoteCooldown}
-                  className={`px-6 py-3 text-white rounded-lg font-bold text-lg ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-red-700 hover:bg-red-800'}`}
+                  className={`px-3 py-1 text-white rounded text-sm ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-gray-600 hover:bg-gray-700'}`}
                 >
                   {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerNeedVote ? '投票离开' : '离开')}
                 </button>
               </div>
             </div>
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <div className="text-white text-2xl font-bold mb-4">等待玩家准备</div>
+                <div className="text-white/60 text-sm mb-4">所有人准备好后自动开局</div>
+                <div className="space-y-2 mb-6">
+                  {currentRoom.players.map((p: any) => (
+                    <div key={p.id} className="flex items-center gap-2 text-lg justify-center">
+                      <span className={p.isReady ? 'text-green-400' : 'text-white/40'}>{p.isReady ? '✅' : '⏳'}</span>
+                      <span className="text-white">{p.name}{p.id === myPlayerId ? '(你)' : ''}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-3 justify-center">
+                  {!isReady && (
+                    <button
+                      onClick={handleReady}
+                      disabled={isSubmitting}
+                      className={`px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      准备
+                    </button>
+                  )}
+                  {isReady && (
+                    <button
+                      onClick={handleCancelReady}
+                      disabled={isSubmitting}
+                      className={`px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      取消准备
+                    </button>
+                  )}
+                  <button
+                    onClick={isInVoteCooldown ? undefined : handleLeaveGame}
+                    disabled={isInVoteCooldown}
+                    className={`px-6 py-3 text-white rounded-lg font-bold text-lg ${isInVoteCooldown ? 'bg-gray-800 text-gray-400 cursor-not-allowed' : 'bg-red-700 hover:bg-red-800'}`}
+                  >
+                    {isInVoteCooldown ? `冷却中 ${voteCooldownRemaining}s` : (myPlayerNeedVote ? '投票离开' : '离开')}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
+          <div className="hidden md:block w-64 flex-shrink-0">
+            <ChatBox />
+          </div>
+          {showMobileChat && (
+            <div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setShowMobileChat(false)}>
+              <div className="absolute right-0 top-0 bottom-0 w-72" onClick={e => e.stopPropagation()}>
+                <ChatBox />
+              </div>
+            </div>
+          )}
         </div>
+        {!showMobileChat && (
+          <button
+            onClick={() => setShowMobileChat(true)}
+            className="md:hidden fixed right-2 bottom-20 z-30 w-10 h-10 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-blue-700 active:scale-95"
+          >
+            💬
+          </button>
+        )}
       </div>
     )
   }
