@@ -1138,7 +1138,7 @@ export class GameEngine {
         playerName: winner.name,
         winAmount: netWin,
         potType: 'main',
-        handRank: 'win',
+        handRank: '胜出',
         handDescription: '其他玩家弃牌',
         winningCards: [],
         holeCards: [],
@@ -1155,10 +1155,11 @@ export class GameEngine {
         playerId: winner.id,
         playerName: winner.name,
         holeCards: [],
-        handRank: 'win',
+        handRank: '胜出',
         handDescription: '其他玩家弃牌',
         isWinner: true,
         winAmount: netWin,
+        netWin,
       });
 
       const foldedPlayers = this.players.filter(p =>

@@ -99,6 +99,7 @@ const HAND_RANK_LABELS: Record<string, string> = {
   '一对': '👫一对',
   '高牌': '🃏高牌',
   '弃牌': '🛑弃牌',
+  '胜出': '🏆胜出',
 }
 
 const SUIT_INFO: Record<string, { symbol: string; isRed: boolean }> = {
@@ -249,7 +250,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
             <div className="p-2 space-y-2">
               {[...handResults].reverse().map((result) => (
                 <div key={result.id} className="rounded border bg-white/5 border-white/10 overflow-hidden">
-                  {result.communityCards && (
+                  {result.communityCards && !result.isRunItTwice && (
                     <div className="px-2 py-1 bg-white/5 border-b border-white/10 flex items-center gap-1">
                       <span className="text-white/40 text-[10px]">公共牌</span>
                       {renderCommunityCards(result.communityCards)}
@@ -260,12 +261,6 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                       {result.runItTwiceRounds.map((round, ri) => (
                         <div key={ri} className={ri > 0 ? 'border-t border-white/10' : ''}>
                           <div className="px-2 py-0.5 bg-purple-500/10 text-purple-300 font-bold text-[10px]">第{ri + 1}轮</div>
-                          {round.communityCards && (
-                            <div className="px-2 py-0.5 flex items-center gap-0.5">
-                              <span className="text-white/40 text-[10px]">牌面</span>
-                              {renderCommunityCards(round.communityCards)}
-                            </div>
-                          )}
                           <table className="w-full">
                             <tbody>
                               {result.players.map((p, pi) => {

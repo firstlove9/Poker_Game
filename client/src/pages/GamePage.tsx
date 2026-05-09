@@ -52,6 +52,8 @@ export default function GamePage() {
   const [resultCommunityCards, setResultCommunityCards] = useState<Card[]>([])
   const [isReady, setIsReady] = useState(false)
   const [isWaitingForStart, setIsWaitingForStart] = useState(false)
+  const [rebuyCountdown, setRebuyCountdown] = useState(0)
+  const rebuyCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const gameStartedDuringReadyRef = useRef(false)
   const [gameOverInfo, setGameOverInfo] = useState<{ winner: { id: string; name: string; chips: number } | null } | null>(null)
@@ -448,6 +450,11 @@ export default function GamePage() {
       if (data.bothReady && data.diceResult) {
         setDiceResult(data.diceResult)
         setDiceIsTied(data.isTied || false)
+        if (!data.isTied) {
+          setTimeout(() => {
+            setShowDiceDialog(false)
+          }, 5000)
+        }
       }
     }
 
@@ -460,6 +467,8 @@ export default function GamePage() {
     }
 
     const handleRunItTwiceShowdown = (data: any) => {
+      setShowDiceDialog(false)
+      setShowRunItTwiceDialog(false)
       if (data.allHands) {
         setRunItTwiceShowdownHands(data.allHands)
       }
@@ -801,13 +810,12 @@ export default function GamePage() {
         const readyResult = await emit(ClientEvents.PLAYER_READY, true)
         if (readyResult?.success) {
           setIsReady(true)
-          setShowResult(false)
-          setIsWaitingForStart(true)
         } else {
           setIsReady(false)
-          setShowResult(false)
-          setIsWaitingForStart(true)
+          addToast(readyResult?.error || '准备失败，请手动准备', 'info')
         }
+        setShowResult(false)
+        setIsWaitingForStart(true)
       } else {
         addToast(result?.error || '补筹码失败', 'error')
       }
@@ -1007,6 +1015,26 @@ export default function GamePage() {
   const myPlayerRole = myPlayer?.playerRoomRole
   const isBusted = myPlayerRole === 'busted'
   const isSpectatorFromBust = myPlayerRole === 'spectator'
+
+  useEffect(() => {
+    if (isBusted && rebuyCountdown === 0) {
+      setRebuyCountdown(15)
+      if (rebuyCountdownRef.current) clearInterval(rebuyCountdownRef.current)
+      rebuyCountdownRef.current = setInterval(() => {
+        setRebuyCountdown(prev => {
+          if (prev <= 1) {
+            if (rebuyCountdownRef.current) clearInterval(rebuyCountdownRef.current)
+            return 0
+          }
+          return prev - 1
+        })
+      }, 1000)
+    }
+    if (!isBusted && rebuyCountdown > 0) {
+      setRebuyCountdown(0)
+      if (rebuyCountdownRef.current) clearInterval(rebuyCountdownRef.current)
+    }
+  }, [isBusted])
   const isAfkSpectator = isAfk && (myPlayerRole === 'active' || myPlayerRole === 'seated' || myPlayerRole === 'busted')
   const showRebuyButton = isBusted && !isAfk
   const myPlayerNeedVote = myPlayerRole === 'active'
@@ -1115,7 +1143,7 @@ export default function GamePage() {
     ? Math.min(myChips, potLimitMaxRaise)
     : myChips
 
-  const activePlayers = players.filter(p => gameState.playerStatus?.[p.id] !== undefined)
+  const activePlayers = players
   const amIInCurrentGame = myPlayerId ? gameState.playerStatus?.[myPlayerId] !== undefined : false
 
   const reorderedPlayers = (() => {
@@ -1357,21 +1385,26 @@ export default function GamePage() {
                 const bet = gameState.roundBets?.[player.id] || 0
                 const isFolded = status === 'folded'
                 const isAllIn = status === 'all-in'
+                const isInGame = status !== undefined
+                const playerRole = player.playerRoomRole
+                const isBustedPlayer = playerRole === 'busted'
+                const isSpectatorPlayer = playerRole === 'spectator'
+                const isAfkPlayer = player.isAfk
 
                 return (
                   <div
                     key={player.id}
                     className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all duration-300 ${
-                      isCurrentTurn && !isFolded ? 'scale-105 md:scale-110' : ''
-                    } ${isFolded ? 'opacity-40' : ''}`}
+                      isCurrentTurn && !isFolded && isInGame ? 'scale-105 md:scale-110' : ''
+                    } ${isFolded ? 'opacity-40' : ''} ${!isInGame ? 'opacity-50' : ''}`}
                     style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
                   >
                     <div className="flex flex-col items-center">
                       <div className="bg-black/40 backdrop-blur-sm rounded-lg px-1.5 py-1 md:px-2 md:py-1.5 border border-white/10">
                         <div className="flex items-center gap-1 md:gap-1.5">
-                          <div className={`relative ${isCurrentTurn && !isFolded ? 'ring-2 ring-yellow-400 rounded-full' : ''}`}>
+                          <div className={`relative ${isCurrentTurn && !isFolded && isInGame ? 'ring-2 ring-yellow-400 rounded-full' : ''}`}>
                             <div className={`w-8 h-8 md:w-12 md:h-12 rounded-full flex items-center justify-center text-white font-bold text-xs md:text-sm ${
-                              isMe ? 'bg-green-600' : 'bg-gray-600'
+                              isMe ? 'bg-green-600' : isSpectatorPlayer ? 'bg-gray-500' : 'bg-gray-600'
                             }`}>
                               {player.name[0]}
                             </div>
@@ -1383,6 +1416,11 @@ export default function GamePage() {
                             {isAllIn && (
                               <div className="absolute -top-1 -right-1 bg-red-600 text-white text-[6px] md:text-[8px] px-0.5 md:px-1 rounded-full font-bold">
                                 ALL IN
+                              </div>
+                            )}
+                            {isAfkPlayer && isInGame && (
+                              <div className="absolute -top-1 -right-1 bg-orange-600 text-white text-[6px] md:text-[8px] px-0.5 md:px-1 rounded-full font-bold">
+                                AFK
                               </div>
                             )}
                             {isWaitingForStart && player.isReady && (
@@ -1397,20 +1435,32 @@ export default function GamePage() {
                             </div>
                             {!player.isOnline ? (
                               <div className="text-orange-400 text-[8px] md:text-[10px] font-bold">⚡断线</div>
+                            ) : isBustedPlayer ? (
+                              <div className="text-red-400 text-[8px] md:text-[10px] font-bold">💸破产</div>
+                            ) : isSpectatorPlayer ? (
+                              <div className="text-gray-400 text-[8px] md:text-[10px] font-bold">👁️观战</div>
+                            ) : isAfkPlayer && !isInGame ? (
+                              <div className="text-orange-400 text-[8px] md:text-[10px] font-bold">☕AFK</div>
                             ) : (
                               <div className="text-yellow-300 text-[9px] md:text-[11px] font-bold">${player.chips}</div>
                             )}
-                            {bet > 0 && (
+                            {isInGame && bet > 0 && (
                               <div className="text-yellow-200 text-[8px] md:text-[10px] font-bold bg-yellow-600/30 px-1 rounded">
                                 下注 ${bet}
                               </div>
                             )}
-                            {isFolded && <div className="text-red-400 text-[8px] md:text-[10px]">弃牌</div>}
-                            {!isFolded && !isCurrentTurn && player.isOnline && !isMe && !isAllIn && (
+                            {isInGame && isFolded && <div className="text-red-400 text-[8px] md:text-[10px]">弃牌</div>}
+                            {isInGame && !isFolded && !isCurrentTurn && player.isOnline && !isMe && !isAllIn && !isAfkPlayer && (
                               <div className="text-green-400/70 text-[7px] md:text-[9px]">在线</div>
                             )}
-                            {isCurrentTurn && !isFolded && !isMe && (
+                            {isInGame && isAfkPlayer && !isCurrentTurn && (
+                              <div className="text-orange-400/70 text-[7px] md:text-[9px]">🤖托管</div>
+                            )}
+                            {isInGame && isCurrentTurn && !isFolded && !isMe && !isAfkPlayer && (
                               <div className="text-yellow-400 text-[8px] md:text-[10px] animate-pulse">思考中</div>
+                            )}
+                            {isInGame && isCurrentTurn && !isFolded && isAfkPlayer && (
+                              <div className="text-orange-400 text-[8px] md:text-[10px] animate-pulse">🤖托管中</div>
                             )}
                           </div>
                         </div>
@@ -1458,7 +1508,7 @@ export default function GamePage() {
                         }
                         return null
                       })()}
-                      {!isMe && !runItTwiceAnimActive && (gameState.phase === 'showdown' || gameState.phase === 'ended') && status !== 'folded' && (
+                      {!isMe && !runItTwiceAnimActive && (gameState.phase === 'showdown' || gameState.phase === 'ended') && status !== 'folded' && isInGame && (
                         <div className="text-white/40 text-[7px] md:text-[9px] mt-0.5">已摊牌</div>
                       )}
                     </div>
@@ -1525,9 +1575,9 @@ export default function GamePage() {
                           const roundLabel = isMultiRound ? (roundIdx === 0 ? 'A轮' : 'B轮') : 'A轮'
                           const roundResult = roundResults.find(r => r.roundIndex === roundIdx)
                           const neededCards = 5 - existingCount
-                          const flopCount = neededCards >= 3 ? 3 : 0
-                          const turnCount = neededCards >= 4 ? 1 : 0
-                          const riverCount = neededCards >= 5 ? 1 : 0
+                          const flopCount = existingCount < 3 ? 3 - existingCount : 0
+                          const turnCount = existingCount < 4 ? 1 : 0
+                          const riverCount = existingCount < 5 ? 1 : 0
                           const newFlop = newCards.slice(0, flopCount)
                           const newTurn = turnCount > 0 ? newCards.slice(flopCount, flopCount + 1) : []
                           const newRiver = riverCount > 0 ? newCards.slice(flopCount + turnCount, flopCount + turnCount + riverCount) : []
@@ -1822,7 +1872,10 @@ export default function GamePage() {
                   </button>
                 ) : showRebuyButton || isSpectatorFromBust ? (
                   <>
-                    {showRebuyButton && (
+                    {rebuyCountdown > 0 && (
+                      <span className="text-orange-400 text-xs md:text-sm self-center font-bold">⏱ {rebuyCountdown}s</span>
+                    )}
+                    {(showRebuyButton || isSpectatorFromBust) && (
                       <button
                         onClick={handleRebuy}
                         disabled={isSubmitting}
@@ -1839,9 +1892,6 @@ export default function GamePage() {
                       >
                         不补（观战）
                       </button>
-                    )}
-                    {isSpectatorFromBust && (
-                      <span className="text-yellow-400 text-xs md:text-sm self-center">👁️ 观战中</span>
                     )}
                   </>
                 ) : isReady ? (
@@ -1999,15 +2049,20 @@ export default function GamePage() {
               <div className="flex gap-2 md:gap-3 mb-3 md:mb-4">
                 {isGameOver ? (
                   <span className="text-yellow-400 text-sm md:text-lg self-center">🏆 游戏已结束</span>
-                ) : showRebuyButton ? (
+                ) : showRebuyButton || isSpectatorFromBust ? (
                   <>
-                    <button
-                      onClick={handleRebuy}
-                      disabled={isSubmitting}
-                      className={`flex-1 px-3 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      补筹码
-                    </button>
+                    {rebuyCountdown > 0 && (
+                      <span className="text-orange-400 text-sm md:text-lg self-center font-bold">⏱ {rebuyCountdown}s</span>
+                    )}
+                    {(showRebuyButton || isSpectatorFromBust) && (
+                      <button
+                        onClick={handleRebuy}
+                        disabled={isSubmitting}
+                        className={`flex-1 px-3 md:px-6 py-2 md:py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        补筹码
+                      </button>
+                    )}
                     {isBusted && !isAfk && (
                       <button
                         onClick={handleDeclineRebuy}
@@ -2016,9 +2071,6 @@ export default function GamePage() {
                       >
                         不补（观战）
                       </button>
-                    )}
-                    {isSpectatorFromBust && (
-                      <span className="text-yellow-400 text-sm md:text-lg self-center">👁️ 观战中</span>
                     )}
                   </>
                 ) : (
@@ -2072,56 +2124,19 @@ export default function GamePage() {
               )}
 
               {runItTwiceBoard && runItTwiceBoard.length === 2 && (() => {
-                const sharedCount = resultCommunityCards.length
                 return (
                   <div className="mb-3 md:mb-4 space-y-3 md:space-y-4">
                     <p className="text-yellow-300/80 text-[10px] md:text-xs text-center font-bold">🎲 跑两轮结果</p>
-                    {runItTwiceBoard.map((board, boardIdx) => {
+                    {runItTwiceBoard.map((_board, boardIdx) => {
                       const roundResult = runItTwiceResults?.[boardIdx]
                       const roundWinnerIds = roundResult?.winnerIds || []
-                      const sharedCards = board.slice(0, sharedCount)
-                      const newCards = board.slice(sharedCount)
                       return (
                         <div key={boardIdx} className="p-2 md:p-3 bg-purple-900/30 rounded-lg border border-purple-600/30">
                           <p className="text-white/60 text-[10px] md:text-xs mb-1.5 md:mb-2 text-center">
                             第{boardIdx + 1}轮 {roundResult ? `(底池 $${roundResult.potAmount})` : ''}
                           </p>
-                          <div className="flex items-center justify-center gap-2 md:gap-3">
-                            {sharedCards.length > 0 && (
-                              <div className="p-1.5 md:p-2 bg-blue-900/40 rounded-md border border-blue-500/30">
-                                <div className="flex gap-1 md:gap-1.5 justify-center">
-                                  {sharedCards.map((card, i) => {
-                                    const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
-                                    const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
-                                    return (
-                                      <div key={i} className={`w-7 h-10 md:w-10 md:h-14 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
-                                        <span className="font-bold text-[9px] md:text-xs">{card.rank}</span>
-                                        <span className="text-[10px] md:text-sm">{suitSymbol[card.suit]}</span>
-                                      </div>
-                                    )
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                            {newCards.length > 0 && (
-                              <div className="p-1.5 md:p-2 bg-yellow-900/40 rounded-md border border-yellow-500/30">
-                                <div className="flex gap-1 md:gap-1.5 justify-center">
-                                  {newCards.map((card, i) => {
-                                    const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
-                                    const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
-                                    return (
-                                      <div key={i} className={`w-7 h-10 md:w-10 md:h-14 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
-                                        <span className="font-bold text-[9px] md:text-xs">{card.rank}</span>
-                                        <span className="text-[10px] md:text-sm">{suitSymbol[card.suit]}</span>
-                                      </div>
-                                    )
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                          </div>
                           {roundResult && roundWinnerIds.length > 0 && (
-                            <div className="mt-1.5 md:mt-2 space-y-0.5 md:space-y-1">
+                            <div className="space-y-0.5 md:space-y-1">
                               {allHands.filter(h => h.roundHandRanks && h.roundHandRanks.length === 2).map(h => {
                                 const isRoundWinner = roundWinnerIds.includes(h.playerId)
                                 const isTie = roundWinnerIds.length > 1 && isRoundWinner

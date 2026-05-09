@@ -36,6 +36,11 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
     });
     const allReady = playersNeedReady.every(p => p.isReady);
     if (!allReady) return false;
+
+    const hasBustedPending = room.players.some(p =>
+      p.playerRoomRole === PlayerRoomRole.BUSTED && p.isOnline && !p.isAfk
+    );
+    if (hasBustedPending) return false;
   }
 
   const gameConfig: GameConfig = {
@@ -462,6 +467,8 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
           winner: winner ? { id: winner.id, name: winner.name, chips: winner.chips } : null,
           room: sanitizeRoom(room),
         });
+      } else {
+        tryStartGame(roomId, roomManager, io);
       }
 
       safeCallback(callback, { success: true });
@@ -693,7 +700,17 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
             if (playerStatus === PlayerStatus.PLAYING) {
               const currentPlayerId = gameEngine.getCurrentPlayerId();
               if (currentPlayerId === playerId) {
-                const actionResult = gameEngine.performAction(playerId, PlayerAction.FOLD);
+                const afkDecision = decideAfkAction(gameEngine, playerId);
+                const { PlayerAction } = require('../../types/poker');
+                const actionMap: Record<string, any> = {
+                  'fold': PlayerAction.FOLD,
+                  'check': PlayerAction.CHECK,
+                  'call': PlayerAction.CALL,
+                  'raise': PlayerAction.RAISE,
+                  'all-in': PlayerAction.ALL_IN,
+                };
+                const playerAction = actionMap[afkDecision.action] || PlayerAction.FOLD;
+                const actionResult = gameEngine.performAction(playerId, playerAction, afkDecision.amount);
                 if (actionResult.success) {
                   room.gameState = gameEngine.getState();
                   syncPlayerChipsToRoom(gameEngine, room);
@@ -702,7 +719,8 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
                   io.to(roomId).emit(ServerEvents.ACTION_RESULT, {
                     playerId,
                     playerName: actor?.name || playerId,
-                    action: 'fold',
+                    action: afkDecision.action,
+                    amount: afkDecision.amount,
                     gameState: sanitizeGameState(room.gameState),
                     room: sanitizeRoom(room),
                   });
@@ -771,6 +789,83 @@ function sanitizeRoom(room: any): any {
   };
 }
 
+function decideAfkAction(gameEngine: GameEngine, playerId: string): { action: string; amount?: number } {
+  const validActions = gameEngine.getValidActions(playerId);
+  const gameState = gameEngine.getState();
+  const myBet = gameState.roundBets[playerId] || 0;
+  const toCall = gameState.currentBet - myBet;
+  const player = gameEngine.getPlayers().find(p => p.id === playerId);
+  const myChips = player?.chips || 0;
+  const random = Math.random();
+
+  const cards = gameEngine.getPlayerCards(playerId);
+  const hasHighCard = cards && cards.length >= 2 && (
+    cards[0].rank === 'A' || cards[0].rank === 'K' || cards[0].rank === 'Q' ||
+    cards[1].rank === 'A' || cards[1].rank === 'K' || cards[1].rank === 'Q'
+  );
+  const isPair = cards && cards.length >= 2 && cards[0].rank === cards[1].rank;
+  const bigBlind = gameState.minRaise || 20;
+
+  if (toCall === 0) {
+    if (isPair && random < 0.4 && validActions.includes('raise') && myChips > bigBlind * 3) {
+      return { action: 'raise', amount: Math.min(bigBlind * 3, myChips) };
+    }
+    if (hasHighCard && random < 0.2 && validActions.includes('raise') && myChips > bigBlind * 2) {
+      return { action: 'raise', amount: Math.min(bigBlind * 2, myChips) };
+    }
+    if (validActions.includes('check')) {
+      return { action: 'check' };
+    }
+    if (validActions.includes('fold')) {
+      return { action: 'fold' };
+    }
+    return { action: validActions[0] || 'fold' };
+  }
+
+  if (isPair) {
+    if (random < 0.6 && validActions.includes('call')) {
+      return { action: 'call' };
+    }
+    if (random < 0.8 && validActions.includes('raise') && myChips > toCall * 2) {
+      return { action: 'raise', amount: Math.min(toCall * 2, myChips) };
+    }
+  }
+
+  if (hasHighCard) {
+    if (toCall <= myChips * 0.3 && random < 0.5 && validActions.includes('call')) {
+      return { action: 'call' };
+    }
+    if (random < 0.35 && validActions.includes('call')) {
+      return { action: 'call' };
+    }
+  }
+
+  if (toCall > myChips * 0.5) {
+    if (random < 0.15 && validActions.includes('call')) {
+      return { action: 'call' };
+    }
+    if (validActions.includes('fold')) {
+      return { action: 'fold' };
+    }
+    if (validActions.includes('check')) {
+      return { action: 'check' };
+    }
+    return { action: validActions[0] || 'fold' };
+  }
+
+  if (random < 0.35 && validActions.includes('call')) {
+    return { action: 'call' };
+  }
+
+  if (validActions.includes('fold')) {
+    return { action: 'fold' };
+  }
+  if (validActions.includes('check')) {
+    return { action: 'check' };
+  }
+  return { action: validActions[0] || 'fold' };
+}
+
 export function handlePlayerTurnWithAfk(roomId: string, room: any, gameEngine: GameEngine, io: Server, roomManager: RoomManager): void {
   const currentPlayerId = gameEngine.getCurrentPlayerId();
   if (!currentPlayerId) return;
@@ -791,7 +886,17 @@ export function handlePlayerTurnWithAfk(roomId: string, room: any, gameEngine: G
       if (gameEngine.getCurrentPlayerId() !== currentPlayerId) return;
       if (!roomManager.getRoom(roomId)) return;
 
-      const actionResult = gameEngine.performAction(currentPlayerId, PlayerAction.FOLD);
+      const afkDecision = decideAfkAction(gameEngine, currentPlayerId);
+      const { PlayerAction } = require('../../types/poker');
+      const actionMap: Record<string, any> = {
+        'fold': PlayerAction.FOLD,
+        'check': PlayerAction.CHECK,
+        'call': PlayerAction.CALL,
+        'raise': PlayerAction.RAISE,
+        'all-in': PlayerAction.ALL_IN,
+      };
+      const playerAction = actionMap[afkDecision.action] || PlayerAction.FOLD;
+      const actionResult = gameEngine.performAction(currentPlayerId, playerAction, afkDecision.amount);
       if (actionResult.success) {
         room.gameState = gameEngine.getState();
         syncPlayerChipsToRoom(gameEngine, room);
@@ -800,7 +905,8 @@ export function handlePlayerTurnWithAfk(roomId: string, room: any, gameEngine: G
         io.to(roomId).emit(ServerEvents.ACTION_RESULT, {
           playerId: currentPlayerId,
           playerName: actor?.name || currentPlayerId,
-          action: 'fold',
+          action: afkDecision.action,
+          amount: afkDecision.amount,
           gameState: sanitizeGameState(room.gameState),
           room: sanitizeRoom(room),
         });

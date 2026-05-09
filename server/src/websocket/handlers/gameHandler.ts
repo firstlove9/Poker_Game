@@ -5,7 +5,7 @@ import { ClientEvents, ServerEvents } from '../../types/events';
 import { PlayerAction, GamePhase, RunItTwiceChoice } from '../../types/poker';
 import { RoomStatus, PlayerRoomRole, RoomPlayer } from '../../types/room';
 import { addActionLog, loadRoomLogs } from '../../room/ActionLogManager';
-import { handlePlayerTurnWithAfk } from './roomHandler';
+import { handlePlayerTurnWithAfk, tryStartGame } from './roomHandler';
 
 export const gameEngines: Map<string, GameEngine> = new Map();
 
@@ -71,6 +71,32 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
     }
   }
 
+  const bustedPlayers = room.players.filter((p: any) => p.playerRoomRole === PlayerRoomRole.BUSTED);
+  if (bustedPlayers.length > 0) {
+    setTimeout(() => {
+      const currentRoom = roomManager.getRoom(roomId);
+      if (!currentRoom || currentRoom.status === RoomStatus.PLAYING) return;
+
+      for (const bp of bustedPlayers) {
+        const currentPlayer = currentRoom.players.find(p => p.id === bp.id);
+        if (currentPlayer && currentPlayer.playerRoomRole === PlayerRoomRole.BUSTED) {
+          currentPlayer.playerRoomRole = PlayerRoomRole.SPECTATOR;
+          currentPlayer.seatIndex = -1;
+          currentPlayer.chips = 0;
+          currentPlayer.isReady = false;
+        }
+      }
+
+      io.to(roomId).emit(ServerEvents.PLAYER_READY_CHANGED, {
+        playerId: 'system',
+        ready: false,
+        room: sanitizeRoom(currentRoom),
+      });
+
+      tryStartGame(roomId, roomManager, io);
+    }, 15000);
+  }
+
   roomManager.syncScoreboard(roomId);
 
   const isRunItTwice = finalGameState.runItTwiceResults && finalGameState.runItTwiceResults.length > 0;
@@ -97,25 +123,29 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
       rounds: boards.length,
     });
 
-    const cardPositions: number[] = neededCards === 5
-      ? [0, 1, 2, 3, 4]
-      : neededCards === 2
-        ? [0, 1]
-        : [0];
+    const cardPositions: number[] = Array.from({ length: neededCards }, (_, i) => i);
 
-    const groupedPositions: number[][] = neededCards === 5
-      ? [[0, 1, 2], [3], [4]]
-      : cardPositions.map(c => [c]);
+    const remainingFlop = Math.max(0, 3 - existingCount);
+    const groupedPositions: number[][] = [];
+    let pos = 0;
+    if (remainingFlop > 0) {
+      groupedPositions.push(Array.from({ length: remainingFlop }, (_, i) => pos + i));
+      pos += remainingFlop;
+    }
+    if (existingCount < 4) {
+      groupedPositions.push([pos]);
+      pos += 1;
+    }
+    if (existingCount < 5) {
+      groupedPositions.push([pos]);
+    }
 
     const dealSteps: { roundIndex: number; cardIndices: number[]; label: string }[] = [];
     for (let ri = 0; ri < boards.length; ri++) {
-      for (const group of groupedPositions) {
-        const firstCi = group[0];
-        const label = neededCards === 5
-          ? (firstCi < 3 ? 'flop' : firstCi === 3 ? 'turn' : 'river')
-          : neededCards === 2
-            ? (firstCi === 0 ? 'turn' : 'river')
-            : 'river';
+      for (let gi = 0; gi < groupedPositions.length; gi++) {
+        const group = groupedPositions[gi];
+        const label = gi === 0 && remainingFlop > 0 ? 'flop'
+          : (gi === groupedPositions.length - 1 ? 'river' : 'turn');
         dealSteps.push({ roundIndex: ri, cardIndices: group, label });
       }
     }
