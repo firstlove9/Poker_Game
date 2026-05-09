@@ -487,14 +487,8 @@ export class GameEngine {
 
   executeRunItTwice(): { winners: WinnerInfo[]; potResults: PotResult[]; allHands: PlayerHandInfo[] } {
     const finalChoice = this.getFinalRunItTwiceChoice();
-
-    if (finalChoice === 'once') {
-      this.dealRemainingCommunityCards();
-      this.endHand();
-      return this.showdown();
-    }
-
-    return this.executeRunItTwiceLogic();
+    const rounds = finalChoice === 'once' ? 1 : 2;
+    return this.executeRunItTwiceLogic(rounds);
   }
 
   getFinalRunItTwiceChoice(): RunItTwiceChoice {
@@ -509,7 +503,7 @@ export class GameEngine {
     return 'once';
   }
 
-  private executeRunItTwiceLogic(): { winners: WinnerInfo[]; potResults: PotResult[]; allHands: PlayerHandInfo[] } {
+  private executeRunItTwiceLogic(rounds: number): { winners: WinnerInfo[]; potResults: PotResult[]; allHands: PlayerHandInfo[] } {
     const activePlayers = this.players.filter(p =>
       this.state.playerStatus[p.id] !== PlayerStatus.FOLDED
     );
@@ -517,26 +511,23 @@ export class GameEngine {
     const existingCommunityCards = [...this.state.communityCards];
     const neededCards = 5 - existingCommunityCards.length;
 
-    const board1: Card[] = [...existingCommunityCards];
-    const board2: Card[] = [...existingCommunityCards];
-
-    if (neededCards > 0) {
-      this.deck.deal();
-      for (let i = 0; i < neededCards; i++) {
-        board1.push(this.deck.deal());
+    const boards: Card[][] = [];
+    for (let r = 0; r < rounds; r++) {
+      const board: Card[] = [...existingCommunityCards];
+      if (neededCards > 0) {
+        this.deck.deal();
+        for (let i = 0; i < neededCards; i++) {
+          board.push(this.deck.deal());
+        }
       }
-
-      this.deck.deal();
-      for (let i = 0; i < neededCards; i++) {
-        board2.push(this.deck.deal());
-      }
+      boards.push(board);
     }
 
-    this.state.runItTwiceBoard = [board1, board2];
+    this.state.runItTwiceBoard = boards;
 
     const totalPot = this.state.pots.reduce((sum, p) => sum + p.amount, 0);
-    const halfPot = Math.floor(totalPot / 2);
-    const remainder = totalPot - halfPot * 2;
+    const potPerRound = Math.floor(totalPot / rounds);
+    const remainder = totalPot - potPerRound * rounds;
 
     const roundResults: RunItTwiceRoundResult[] = [];
     const roundWinnings: Map<string, number> = new Map();
@@ -558,9 +549,9 @@ export class GameEngine {
       [HandRank.ROYAL_FLUSH]: '皇家同花顺',
     };
 
-    for (let round = 0; round < 2; round++) {
-      const board = round === 0 ? board1 : board2;
-      const potForRound = round === 0 ? halfPot + remainder : halfPot;
+    for (let round = 0; round < rounds; round++) {
+      const board = boards[round];
+      const potForRound = round === 0 ? potPerRound + remainder : potPerRound;
 
       const playerHands: Map<string, { hand: HandEvaluation; cards: Card[] }> = new Map();
       for (const player of activePlayers) {
@@ -626,7 +617,7 @@ export class GameEngine {
     }
 
     this.state.runItTwiceResults = roundResults;
-    this.state.communityCards = board1;
+    this.state.communityCards = boards[0];
     this.state.phase = GamePhase.SHOWDOWN;
 
     return this.buildRunItTwiceShowdownResult(activePlayers, roundResults, roundWinnings);

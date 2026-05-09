@@ -82,6 +82,21 @@ export default function GamePage() {
   const [runItTwiceBoard, setRunItTwiceBoard] = useState<Card[][]>([])
   const [runItTwiceResults, setRunItTwiceResults] = useState<RunItTwiceRoundResult[]>([])
   const [isAfk, setIsAfk] = useState(false)
+  const [runItTwiceShowdownHands, setRunItTwiceShowdownHands] = useState<{ playerId: string; playerName: string; holeCards: Card[] }[]>([])
+  const [runItTwiceAnimActive, setRunItTwiceAnimActive] = useState(false)
+  const [runItTwiceAnimCards, setRunItTwiceAnimCards] = useState<Card[][]>([])
+  const [runItTwiceAnimCountdown, setRunItTwiceAnimCountdown] = useState(0)
+  const [runItTwiceAnimPhase, setRunItTwiceAnimPhase] = useState<'waiting' | 'dealing' | 'done'>('waiting')
+  const [runItTwiceAnimExistingCount, setRunItTwiceAnimExistingCount] = useState(0)
+  const [runItTwiceRoundResults, setRunItTwiceRoundResults] = useState<{
+    roundIndex: number
+    roundLabel: string
+    winnerIds: string[]
+    winAmount: number
+    potAmount: number
+    handRanks: Record<string, string>
+    communityCards: Card[]
+  }[]>([])
 
   const addLog = useCallback((playerName: string, action: string, amount?: number, phase?: string) => {
     setActionLogs(prev => [...prev, {
@@ -142,6 +157,20 @@ export default function GamePage() {
   }, [showVoteModal, voteInfo?.createdAt])
 
   useEffect(() => {
+    if (!runItTwiceAnimActive || runItTwiceAnimCountdown <= 0) return
+    const timer = setInterval(() => {
+      setRunItTwiceAnimCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(timer)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [runItTwiceAnimActive, runItTwiceAnimCountdown])
+
+  useEffect(() => {
     if (!roomId) return
 
     const handleGameStarted = (data: any) => {
@@ -164,6 +193,13 @@ export default function GamePage() {
       setDicePlayers([])
       setRunItTwiceBoard([])
       setRunItTwiceResults([])
+      setRunItTwiceShowdownHands([])
+      setRunItTwiceAnimActive(false)
+      setRunItTwiceAnimCards([[], []])
+      setRunItTwiceAnimCountdown(0)
+      setRunItTwiceAnimPhase('waiting')
+      setRunItTwiceAnimExistingCount(0)
+      setRunItTwiceRoundResults([])
       const meInRoom = data.room?.players?.find((p: any) => p.id === myPlayerId)
       setIsReady(meInRoom?.isReady || false)
       if (meInRoom?.isAfk !== undefined) setIsAfk(meInRoom.isAfk)
@@ -421,9 +457,59 @@ export default function GamePage() {
       }
     }
 
+    const handleRunItTwiceShowdown = (data: any) => {
+      if (data.allHands) {
+        setRunItTwiceShowdownHands(data.allHands)
+      }
+      const existingCards: Card[] = data.communityCards || []
+      setResultCommunityCards(existingCards)
+      const existingCount = existingCards.length
+      const rounds = data.rounds || 2
+      setRunItTwiceAnimExistingCount(existingCount)
+      setRunItTwiceAnimActive(true)
+      const initialCards = Array.from({ length: rounds }, () => existingCount > 0 ? existingCards.slice() : [])
+      setRunItTwiceAnimCards(initialCards)
+      setRunItTwiceAnimPhase('waiting')
+      setRunItTwiceAnimCountdown(5)
+    }
+
+    const handleRunItTwiceDealCard = (data: any) => {
+      const { roundCards, countdown } = data
+      setRunItTwiceAnimPhase('dealing')
+      setRunItTwiceAnimCards(prev => {
+        const newCards = prev.map(round => [...round])
+        for (const rc of roundCards) {
+          if (newCards[rc.roundIndex]) {
+            newCards[rc.roundIndex].push(rc.card)
+          }
+        }
+        return newCards
+      })
+      if (countdown > 0) {
+        setTimeout(() => {
+          setRunItTwiceAnimPhase('waiting')
+          setRunItTwiceAnimCountdown(countdown)
+        }, 800)
+      } else {
+        setRunItTwiceAnimPhase('done')
+        setRunItTwiceAnimCountdown(0)
+      }
+    }
+
+    const handleRunItTwiceRoundResult = (data: any) => {
+      setRunItTwiceRoundResults(prev => [...prev, {
+        roundIndex: data.roundIndex,
+        roundLabel: data.roundLabel,
+        winnerIds: data.winnerIds,
+        winAmount: data.winAmount,
+        potAmount: data.potAmount,
+        handRanks: data.handRanks,
+        communityCards: data.communityCards,
+      }])
+    }
+
     const handleShowdownWithRunItTwice = (data: any) => {
       setWinners(data.winners)
-      setShowResult(true)
       if (data.allHands) {
         setAllHands(data.allHands)
       }
@@ -469,7 +555,7 @@ export default function GamePage() {
             handRank: h.handRank || '',
           }
         })
-        const isRunItTwice = !!(data.runItTwiceBoard && data.runItTwiceBoard.length > 1)
+        const isRunItTwice = !!(data.runItTwiceBoard && data.runItTwiceBoard.length > 0)
         const runItTwiceRounds = isRunItTwice
           ? data.runItTwiceBoard.map((board: any[], roundIdx: number) => {
               const roundResult = data.runItTwiceResults?.[roundIdx]
@@ -490,6 +576,13 @@ export default function GamePage() {
           runItTwiceRounds,
         }])
       }
+
+      const isRunItTwice = !!(data.runItTwiceBoard && data.runItTwiceBoard.length > 0)
+      if (isRunItTwice) {
+        setRunItTwiceAnimActive(false)
+        setRunItTwiceAnimCountdown(0)
+      }
+      setShowResult(true)
     }
 
     on(ServerEvents.GAME_STARTED, handleGameStarted)
@@ -512,6 +605,9 @@ export default function GamePage() {
     on(ServerEvents.RUN_IT_TWICE_CHOICE_RESULT, handleRunItTwiceChoiceResult)
     on(ServerEvents.RUN_IT_TWICE_DICE_RESULT, handleRunItTwiceDiceResult)
     on(ServerEvents.RUN_IT_TWICE_EXECUTING, handleRunItTwiceExecuting)
+    on(ServerEvents.RUN_IT_TWICE_SHOWDOWN, handleRunItTwiceShowdown)
+    on(ServerEvents.RUN_IT_TWICE_DEAL_CARD, handleRunItTwiceDealCard)
+    on(ServerEvents.RUN_IT_TWICE_ROUND_RESULT, handleRunItTwiceRoundResult)
     on(ServerEvents.GAME_OVER, handleGameOver)
     on(ServerEvents.AFK_STATUS_CHANGED, handleAfkStatusChanged)
 
@@ -538,6 +634,9 @@ export default function GamePage() {
       off(ServerEvents.RUN_IT_TWICE_CHOICE_RESULT, handleRunItTwiceChoiceResult)
       off(ServerEvents.RUN_IT_TWICE_DICE_RESULT, handleRunItTwiceDiceResult)
       off(ServerEvents.RUN_IT_TWICE_EXECUTING, handleRunItTwiceExecuting)
+      off(ServerEvents.RUN_IT_TWICE_SHOWDOWN, handleRunItTwiceShowdown)
+      off(ServerEvents.RUN_IT_TWICE_DEAL_CARD, handleRunItTwiceDealCard)
+      off(ServerEvents.RUN_IT_TWICE_ROUND_RESULT, handleRunItTwiceRoundResult)
       off(ServerEvents.GAME_OVER, handleGameOver)
       off(ServerEvents.AFK_STATUS_CHANGED, handleAfkStatusChanged)
     }
@@ -697,9 +796,16 @@ export default function GamePage() {
     try {
       const result = await emit(ClientEvents.GET_CHIPS)
       if (result?.success) {
-        setIsReady(false)
-        setShowResult(false)
-        setIsWaitingForStart(true)
+        const readyResult = await emit(ClientEvents.PLAYER_READY, true)
+        if (readyResult?.success) {
+          setIsReady(true)
+          setShowResult(false)
+          setIsWaitingForStart(true)
+        } else {
+          setIsReady(false)
+          setShowResult(false)
+          setIsWaitingForStart(true)
+        }
       } else {
         addToast(result?.error || '补筹码失败', 'error')
       }
@@ -765,6 +871,13 @@ export default function GamePage() {
           setIsReady(true)
           setShowResult(false)
           setIsMyTurn(false)
+          setRunItTwiceAnimActive(false)
+          setRunItTwiceAnimCards([[], []])
+          setRunItTwiceAnimCountdown(0)
+          setRunItTwiceAnimPhase('waiting')
+          setRunItTwiceAnimExistingCount(0)
+          setRunItTwiceRoundResults([])
+          setRunItTwiceShowdownHands([])
           if (!gameState || gameState.phase === 'waiting' || gameState.phase === 'showdown' || gameState.phase === 'ended') {
             setIsWaitingForStart(true)
           }
@@ -814,6 +927,7 @@ export default function GamePage() {
   const handleRunItTwiceChoice = async (choice: RunItTwiceChoice) => {
     try {
       setRunItTwiceMyChoice(choice)
+      setShowRunItTwiceDialog(false)
       await emit(ClientEvents.RUN_IT_TWICE_CHOICE, { choice })
     } catch (error: any) {
       setMessage(error.message || '选择失败')
@@ -1313,7 +1427,7 @@ export default function GamePage() {
                           })}
                         </div>
                       )}
-                      {!isMe && (status === 'playing' || status === 'all-in') && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && (
+                      {!isMe && (status === 'playing' || status === 'all-in') && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && !runItTwiceAnimActive && (
                         <div className="flex gap-0.5 md:gap-1 mt-0.5 md:mt-1">
                           {Array.from({ length: VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].holeCardCount }).map((_, ci) => (
                             <div key={ci} className="w-6 h-9 md:w-10 md:h-14 bg-gradient-to-br from-blue-700 to-blue-900 rounded-lg border border-blue-400 flex items-center justify-center shadow-md">
@@ -1322,13 +1436,180 @@ export default function GamePage() {
                           ))}
                         </div>
                       )}
-                      {!isMe && (gameState.phase === 'showdown' || gameState.phase === 'ended') && status !== 'folded' && (
+                      {!isMe && runItTwiceAnimActive && (() => {
+                        const handInfo = runItTwiceShowdownHands.find(h => h.playerId === player.id)
+                        if (handInfo && handInfo.holeCards && handInfo.holeCards.length > 0) {
+                          return (
+                            <div className="flex gap-0.5 md:gap-1 mt-0.5 md:mt-1">
+                              {handInfo.holeCards.map((card, ci) => {
+                                const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
+                                const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                                return (
+                                  <div key={ci} className={`w-6 h-9 md:w-10 md:h-14 bg-white rounded-lg border border-gray-300 flex flex-col items-center justify-center shadow-md ${isRed ? 'text-red-600' : 'text-black'}`}>
+                                    <span className="font-bold text-[8px] md:text-xs leading-tight">{card.rank}</span>
+                                    <span className="text-[10px] md:text-sm leading-tight">{suitSymbol[card.suit]}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )
+                        }
+                        return null
+                      })()}
+                      {!isMe && !runItTwiceAnimActive && (gameState.phase === 'showdown' || gameState.phase === 'ended') && status !== 'folded' && (
                         <div className="text-white/40 text-[7px] md:text-[9px] mt-0.5">已摊牌</div>
                       )}
                     </div>
                   </div>
                 )
               })}
+              {runItTwiceAnimActive && runItTwiceAnimCards.length >= 1 && (() => {
+                const existingCount = runItTwiceAnimExistingCount
+                const showdownHands = runItTwiceShowdownHands
+                const roundResults = runItTwiceRoundResults
+                const isMultiRound = runItTwiceAnimCards.length > 1
+                return (
+                  <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+                    <div className="bg-black/70 backdrop-blur-md rounded-xl px-4 py-3 md:px-6 md:py-4 border border-yellow-500/40 shadow-2xl pointer-events-auto max-w-[95vw] max-h-[90vh] overflow-y-auto">
+                      <div className="text-center mb-3">
+                        <span className="text-yellow-300 font-bold text-base md:text-lg">🎲 跑马发牌</span>
+                        {runItTwiceAnimCountdown > 0 && (
+                          <div className="mt-2">
+                            <div className="inline-flex items-center justify-center w-10 h-10 md:w-12 md:h-12 rounded-full bg-yellow-500/20 border-2 border-yellow-400 animate-pulse">
+                              <span className="text-yellow-300 font-bold text-xl md:text-2xl">{runItTwiceAnimCountdown}</span>
+                            </div>
+                            <div className="text-yellow-200/60 text-xs mt-1">
+                              {runItTwiceAnimPhase === 'waiting' ? '即将发牌...' : runItTwiceAnimPhase === 'done' ? '发牌完成' : '发牌中...'}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {showdownHands.length > 0 && (
+                        <div className="mb-3">
+                          <div className="text-white/50 text-xs mb-1 text-center">玩家手牌</div>
+                          <div className="flex justify-center gap-4 flex-wrap">
+                            {showdownHands.map(hand => {
+                              const latestResult = roundResults[roundResults.length - 1]
+                              return (
+                                <div key={hand.playerId} className="text-center">
+                                  <div className="text-white/80 text-xs mb-1">{hand.playerName}</div>
+                                  <div className="flex gap-0.5 justify-center">
+                                    {hand.holeCards.map((card, ci) => {
+                                      const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
+                                      const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                                      return (
+                                        <div key={ci} className={`w-8 h-12 md:w-10 md:h-14 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
+                                          <span className="font-bold text-xs">{card.rank}</span>
+                                          <span className="text-sm">{suitSymbol[card.suit]}</span>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                  {latestResult && latestResult.handRanks && (
+                                    <div className="text-yellow-300/80 text-xs mt-0.5">{latestResult.handRanks[hand.playerId]}</div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        {runItTwiceAnimCards.map((roundCards, roundIdx) => {
+                          const sharedCards = roundCards.slice(0, existingCount)
+                          const newCards = roundCards.slice(existingCount)
+                          const roundLabel = isMultiRound ? (roundIdx === 0 ? 'A轮' : 'B轮') : 'A轮'
+                          const roundResult = roundResults.find(r => r.roundIndex === roundIdx)
+                          const neededCards = 5 - existingCount
+                          const flopCount = neededCards >= 3 ? 3 : 0
+                          const turnCount = neededCards >= 4 ? 1 : 0
+                          const riverCount = neededCards >= 5 ? 1 : 0
+                          const newFlop = newCards.slice(0, flopCount)
+                          const newTurn = turnCount > 0 ? newCards.slice(flopCount, flopCount + 1) : []
+                          const newRiver = riverCount > 0 ? newCards.slice(flopCount + turnCount, flopCount + turnCount + riverCount) : []
+                          const flopDealt = newFlop.length > 0
+                          const turnDealt = newTurn.length > 0
+                          const riverDealt = newRiver.length > 0
+                          const cardEl = (card: Card, key: string, highlight: boolean) => {
+                            const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
+                            const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                            return (
+                              <div key={key} className={`w-8 h-12 md:w-10 md:h-14 bg-white rounded ${highlight ? 'border-2 border-yellow-400 shadow-lg shadow-yellow-400/30 animate-[fadeIn_0.3s_ease-in]' : 'border border-gray-300'} flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
+                                <span className="font-bold text-xs">{card.rank}</span>
+                                <span className="text-sm">{suitSymbol[card.suit]}</span>
+                              </div>
+                            )
+                          }
+                          const emptyEl = (key: string) => (
+                            <div key={key} className="w-8 h-12 md:w-10 md:h-14 border-2 border-dashed border-white/20 rounded flex items-center justify-center">
+                              <span className="text-white/20 text-sm">?</span>
+                            </div>
+                          )
+                          return (
+                            <div key={roundIdx} className="p-2 bg-purple-900/40 rounded-lg border border-purple-500/30">
+                              <div className="text-white/60 text-xs mb-1 text-center font-bold">
+                                {roundLabel}
+                                {roundResult ? ` (底池 $${roundResult.potAmount})` : ''}
+                              </div>
+                              <div className="flex items-center justify-center gap-1">
+                                {sharedCards.length > 0 && (
+                                  <div className="flex gap-0.5">
+                                    {sharedCards.map((card, i) => cardEl(card, `s${i}`, false))}
+                                  </div>
+                                )}
+                                {flopCount > 0 && (
+                                  <div className="flex gap-0.5 ml-2">
+                                    {flopDealt
+                                      ? newFlop.map((card, i) => cardEl(card, `f${i}`, true))
+                                      : Array.from({ length: flopCount }).map((_, i) => emptyEl(`fe${i}`))
+                                    }
+                                  </div>
+                                )}
+                                {turnCount > 0 && (
+                                  <div className="flex gap-0.5 ml-2">
+                                    {turnDealt
+                                      ? newTurn.map((card, i) => cardEl(card, `t${i}`, true))
+                                      : emptyEl('te')
+                                    }
+                                  </div>
+                                )}
+                                {riverCount > 0 && (
+                                  <div className="flex gap-0.5 ml-2">
+                                    {riverDealt
+                                      ? newRiver.map((card, i) => cardEl(card, `r${i}`, true))
+                                      : emptyEl('re')
+                                    }
+                                  </div>
+                                )}
+                                {neededCards === 0 && roundCards.length === 0 && (
+                                  <div className="flex gap-0.5">
+                                    {Array.from({ length: 5 }).map((_, i) => emptyEl(`e${i}`))}
+                                  </div>
+                                )}
+                              </div>
+                              {roundResult && (
+                                <div className="mt-2 p-2 bg-yellow-500/10 rounded border border-yellow-500/30">
+                                  <div className="text-yellow-300 text-xs font-bold text-center mb-1">
+                                    {roundResult.roundLabel}结算
+                                  </div>
+                                  <div className="text-white/80 text-xs text-center">
+                                    {roundResult.winnerIds.map(wid => {
+                                      const hand = showdownHands.find(h => h.playerId === wid)
+                                      return hand ? hand.playerName : wid
+                                    }).join(', ')} 赢得 ${roundResult.winAmount}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
           </div>

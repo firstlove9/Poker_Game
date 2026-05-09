@@ -416,6 +416,9 @@ export enum ServerEvents {
   RUN_IT_TWICE_CHOICE_RESULT = 'game:run_it_twice_choice_result',
   RUN_IT_TWICE_DICE_RESULT = 'game:run_it_twice_dice_result',
   RUN_IT_TWICE_EXECUTING = 'game:run_it_twice_executing',
+  RUN_IT_TWICE_SHOWDOWN = 'game:run_it_twice_showdown',
+  RUN_IT_TWICE_DEAL_CARD = 'game:run_it_twice_deal_card',
+  RUN_IT_TWICE_ROUND_RESULT = 'game:run_it_twice_round_result',
   GAME_OVER = 'game:game_over',
   AFK_STATUS_CHANGED = 'room:afk_status_changed',
 }

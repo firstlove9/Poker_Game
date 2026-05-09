@@ -15,7 +15,7 @@ function safeCallback(callback: any, response: any): void {
   }
 }
 
-function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: any[], potResults: any[], allHands: any[], finalGameState: any, io: any, roomManager: RoomManager): void {
+function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: any[], potResults: any[], allHands: any[], finalGameState: any, io: any, roomManager: RoomManager, preRunItTwiceCommunityCards?: any[]): void {
   const mergedWinners = (() => {
     const map = new Map<string, any>();
     for (const w of winners) {
@@ -75,10 +75,163 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
 
   const isRunItTwice = finalGameState.runItTwiceResults && finalGameState.runItTwiceResults.length > 0;
 
+  const sanitizedAllHands = isRunItTwice
+    ? allHands.map((h: any) => ({ ...h, holeCards: [] }))
+    : allHands;
+
+  if (isRunItTwice) {
+    const showdownHands = allHands.map((h: any) => ({
+      playerId: h.playerId,
+      playerName: h.playerName,
+      holeCards: h.holeCards,
+    }));
+    const existingCount = (preRunItTwiceCommunityCards || []).length;
+    const boards = finalGameState.runItTwiceBoard;
+    const neededCards = 5 - existingCount;
+    const DEAL_DELAY = 5000;
+    const FINAL_DELAY = 3000;
+
+    io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_SHOWDOWN, {
+      allHands: showdownHands,
+      communityCards: preRunItTwiceCommunityCards || [],
+      rounds: boards.length,
+    });
+
+    const cardPositions: number[] = neededCards === 5
+      ? [0, 1, 2, 3, 4]
+      : neededCards === 2
+        ? [0, 1]
+        : [0];
+
+    const groupedPositions: number[][] = neededCards === 5
+      ? [[0, 1, 2], [3], [4]]
+      : cardPositions.map(c => [c]);
+
+    const dealSteps: { roundIndex: number; cardIndices: number[]; label: string }[] = [];
+    for (let ri = 0; ri < boards.length; ri++) {
+      for (const group of groupedPositions) {
+        const firstCi = group[0];
+        const label = neededCards === 5
+          ? (firstCi < 3 ? 'flop' : firstCi === 3 ? 'turn' : 'river')
+          : neededCards === 2
+            ? (firstCi === 0 ? 'turn' : 'river')
+            : 'river';
+        dealSteps.push({ roundIndex: ri, cardIndices: group, label });
+      }
+    }
+
+    const scheduleDeal = (stepIndex: number) => {
+      if (stepIndex >= dealSteps.length) {
+        setTimeout(() => {
+          io.to(roomId).emit(ServerEvents.SHOWDOWN, {
+            winners: mergedWinners,
+            potResults,
+            allHands: sanitizedAllHands,
+            communityCards: finalGameState.communityCards,
+            gameState: sanitizeGameState(finalGameState),
+            room: sanitizeRoom(room),
+            runItTwiceBoard: finalGameState.runItTwiceBoard,
+            runItTwiceResults: finalGameState.runItTwiceResults,
+          });
+
+          io.to(roomId).emit(ServerEvents.HAND_RESULT, {
+            winners: mergedWinners,
+            potResults,
+            allHands: sanitizedAllHands,
+            communityCards: finalGameState.communityCards,
+            room: sanitizeRoom(room),
+            runItTwiceBoard: finalGameState.runItTwiceBoard,
+            runItTwiceResults: finalGameState.runItTwiceResults,
+          });
+
+          room.gameState = {
+            ...room.gameState,
+            currentBet: 0,
+            minRaise: room.config?.bigBlind || 20,
+            roundBets: {},
+            pots: [],
+            totalPot: 0,
+            actions: [],
+            communityCards: [],
+            playerCards: {},
+            playerStatus: {},
+            playerRoles: {},
+            lastRaiseIndex: -1,
+            currentPlayerIndex: -1,
+            currentPlayerId: '',
+            isHeadsUpAllIn: false,
+            runItTwiceChoices: {},
+            runItTwiceDiceResult: null,
+            runItTwiceDiceReady: {},
+            runItTwiceBoard: [],
+            runItTwiceResults: [],
+            lastShowdownResult: {
+              winners: mergedWinners,
+              allHands: sanitizedAllHands,
+              communityCards: finalGameState.communityCards,
+              runItTwiceBoard: finalGameState.runItTwiceBoard || [],
+              runItTwiceResults: finalGameState.runItTwiceResults || [],
+            },
+          };
+
+          io.to(roomId).emit(ServerEvents.ROOM_UPDATED, {
+            type: 'updated',
+            room: sanitizeRoom(room),
+          });
+        }, FINAL_DELAY);
+        return;
+      }
+
+      setTimeout(() => {
+        const step = dealSteps[stepIndex];
+        const roundCards: { roundIndex: number; card: any }[] = [];
+        for (const ci of step.cardIndices) {
+          const cardPos = existingCount + ci;
+          if (cardPos < boards[step.roundIndex].length) {
+            roundCards.push({ roundIndex: step.roundIndex, card: boards[step.roundIndex][cardPos] });
+          }
+        }
+
+        const isLastStep = stepIndex === dealSteps.length - 1;
+        const isLastStepOfRound = isLastStep ||
+          dealSteps[stepIndex + 1].roundIndex !== step.roundIndex;
+
+        io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_DEAL_CARD, {
+          stepIndex,
+          roundIndex: step.roundIndex,
+          cardLabel: step.label,
+          roundCards,
+          countdown: isLastStep ? 0 : DEAL_DELAY / 1000,
+        });
+
+        if (isLastStepOfRound) {
+          const roundResult = finalGameState.runItTwiceResults[step.roundIndex];
+          if (roundResult) {
+            io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_ROUND_RESULT, {
+              roundIndex: step.roundIndex,
+              roundLabel: boards.length > 1 ? (step.roundIndex === 0 ? 'A轮' : 'B轮') : '跑马',
+              winnerIds: roundResult.winnerIds,
+              winAmount: roundResult.winAmount,
+              potAmount: roundResult.potAmount,
+              handRanks: roundResult.handRanks,
+              communityCards: boards[step.roundIndex],
+            });
+          }
+        }
+
+        scheduleDeal(stepIndex + 1);
+      }, DEAL_DELAY);
+    };
+
+    scheduleDeal(0);
+
+    return;
+  }
+
   io.to(roomId).emit(ServerEvents.SHOWDOWN, {
     winners: mergedWinners,
     potResults,
-    allHands,
+    allHands: sanitizedAllHands,
     communityCards: finalGameState.communityCards,
     gameState: sanitizeGameState(finalGameState),
     room: sanitizeRoom(room),
@@ -91,7 +244,7 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
   io.to(roomId).emit(ServerEvents.HAND_RESULT, {
     winners: mergedWinners,
     potResults,
-    allHands,
+    allHands: sanitizedAllHands,
     communityCards: finalGameState.communityCards,
     room: sanitizeRoom(room),
     ...(isRunItTwice ? {
@@ -123,7 +276,7 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
     runItTwiceResults: [],
     lastShowdownResult: {
       winners: mergedWinners,
-      allHands,
+      allHands: sanitizedAllHands,
       communityCards: finalGameState.communityCards,
       runItTwiceBoard: finalGameState.runItTwiceBoard || [],
       runItTwiceResults: finalGameState.runItTwiceResults || [],
@@ -242,6 +395,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
                       gameState: sanitizeGameState(gameEngine.getState()),
                     });
 
+                    const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
                     const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
                     const finalGameState = gameEngine.getState();
                     room.gameState = finalGameState;
@@ -256,7 +410,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
                       if (roomPlayer) h.playerName = roomPlayer.name;
                     }
 
-                    finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager);
+                    finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
                   }
                 }
               }
@@ -374,6 +528,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
             gameState: sanitizeGameState(gameState),
           });
 
+          const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
           const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
           const finalGameState = gameEngine.getState();
           room.gameState = finalGameState;
@@ -388,7 +543,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
             if (roomPlayer) h.playerName = roomPlayer.name;
           }
 
-          finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager);
+          finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
         }
       }
 
@@ -476,6 +631,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
               gameState: sanitizeGameState(gameState),
             });
 
+            const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
             const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
             const finalGameState = gameEngine.getState();
             room.gameState = finalGameState;
@@ -490,7 +646,7 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
               if (roomPlayer) h.playerName = roomPlayer.name;
             }
 
-            finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager);
+            finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
           }, 2000);
         }
       }
