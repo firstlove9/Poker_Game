@@ -455,6 +455,8 @@ export default function GamePage() {
       if (data.gameState) {
         setGameState(data.gameState)
       }
+      setShowRunItTwiceDialog(false)
+      setShowDiceDialog(false)
     }
 
     const handleRunItTwiceShowdown = (data: any) => {

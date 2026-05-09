@@ -126,7 +126,7 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
           io.to(roomId).emit(ServerEvents.SHOWDOWN, {
             winners: mergedWinners,
             potResults,
-            allHands: sanitizedAllHands,
+            allHands,
             communityCards: finalGameState.communityCards,
             gameState: sanitizeGameState(finalGameState),
             room: sanitizeRoom(room),
@@ -137,7 +137,7 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
           io.to(roomId).emit(ServerEvents.HAND_RESULT, {
             winners: mergedWinners,
             potResults,
-            allHands: sanitizedAllHands,
+            allHands,
             communityCards: finalGameState.communityCards,
             room: sanitizeRoom(room),
             runItTwiceBoard: finalGameState.runItTwiceBoard,
