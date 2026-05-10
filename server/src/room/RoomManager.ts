@@ -235,16 +235,16 @@ export class RoomManager {
       const player = room.players.find(p => p.id === playerId);
       if (player) {
         const role = player.playerRoomRole;
-        if (role === PlayerRoomRole.SPECTATOR || role === PlayerRoomRole.SEATED || role === PlayerRoomRole.BUSTED) {
-          // 观战者、未参与牌局者、破产者可直接离开
+        if (role === PlayerRoomRole.SPECTATOR || role === PlayerRoomRole.BUSTED) {
+        } else if (role === PlayerRoomRole.SEATED) {
+          if (player.hasPlayedHand) {
+            return { success: false, error: '你已参与过牌局，请发起投票离开' };
+          }
         } else if (role === PlayerRoomRole.ACTIVE) {
           const playerStatus = room.gameState?.playerStatus?.[playerId];
           if (playerStatus === undefined) {
-            // ACTIVE 但不在当前手牌中，可直接离开
           } else if (playerStatus === 'folded') {
-            // 已弃牌，无利益牵涉，可直接离开
           } else {
-            // 在手牌中且未弃牌（PLAYING / ALL_IN），需投票
             return { success: false, error: '牌局进行中，请发起投票离开' };
           }
         }

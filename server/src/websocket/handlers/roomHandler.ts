@@ -728,8 +728,8 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
         if (player && room) {
           const role = player.playerRoomRole;
           const canDirectLeave = role === PlayerRoomRole.SPECTATOR
-            || role === PlayerRoomRole.SEATED
             || role === PlayerRoomRole.BUSTED
+            || (role === PlayerRoomRole.SEATED && !player.hasPlayedHand)
             || (role === PlayerRoomRole.ACTIVE && room.status !== RoomStatus.PLAYING)
             || (role === PlayerRoomRole.ACTIVE && room.status === RoomStatus.PLAYING
               && (room.gameState?.playerStatus?.[playerId] === undefined

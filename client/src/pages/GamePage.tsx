@@ -815,9 +815,16 @@ export default function GamePage() {
   const handleLeaveGame = async () => {
     const myPlayer = currentRoom?.players?.find((p: any) => p.id === myPlayerId)
     const role = myPlayer?.playerRoomRole
-    const needVote = role === 'active'
-      && myPlayerId
-      && (currentRoom?.status === 'playing' || (currentRoom?.status === 'waiting' && gameState?.phase === 'ended'))
+    const hasPlayed = myPlayer?.hasPlayedHand === true
+    const isFinal = isGameOver || (
+      currentRoom?.config?.fixedHands
+      && currentRoom.config.fixedHands > 0
+      && (currentRoom.handCount || 0) >= currentRoom.config.fixedHands
+    )
+    const needVote = hasPlayed
+      && role !== 'spectator'
+      && role !== 'busted'
+      && !isFinal
 
     if (needVote) {
       try {
@@ -1088,9 +1095,15 @@ export default function GamePage() {
   const showRebuyButton = isBusted && !isAfk
   const myRebuyCount = (currentRoom?.playerRebuyCounts && myPlayerId) ? (currentRoom.playerRebuyCounts[myPlayerId] || 0) : 0
   const maxRebuyReached = currentRoom?.config.maxRebuyCount !== undefined && currentRoom.config.maxRebuyCount >= 0 && myRebuyCount >= currentRoom.config.maxRebuyCount
-  const myPlayerNeedVote = myPlayerRole === 'active'
-    && myPlayerId
-    && (currentRoom?.status === 'playing' || (currentRoom?.status === 'waiting' && gameState?.phase === 'ended'))
+  const isFinalSettlement = isGameOver || (
+    currentRoom?.config?.fixedHands
+    && currentRoom.config.fixedHands > 0
+    && (currentRoom.handCount || 0) >= currentRoom.config.fixedHands
+  )
+  const myPlayerNeedVote = myPlayer?.hasPlayedHand === true
+    && myPlayerRole !== 'spectator'
+    && myPlayerRole !== 'busted'
+    && !isFinalSettlement
 
   if (!currentRoom) {
     return (
