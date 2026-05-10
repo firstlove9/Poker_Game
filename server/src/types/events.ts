@@ -14,6 +14,8 @@ export enum ClientEvents {
   RUN_IT_TWICE_ROLL_DICE = 'game:run_it_twice_roll_dice',
   DECLINE_REBUY = 'room:decline_rebuy',
   AFK = 'room:afk',
+  VOTE_EXTEND_HANDS = 'room:vote_extend_hands',
+  VOTE_EXTEND_HANDS_RESPONSE = 'room:vote_extend_hands_response',
 }
 
 // 服务端 → 客户端 事件
@@ -53,4 +55,7 @@ export enum ServerEvents {
   RUN_IT_TWICE_ROUND_RESULT = 'game:run_it_twice_round_result',
   GAME_OVER = 'game:game_over',
   AFK_STATUS_CHANGED = 'room:afk_status_changed',
+  VOTE_EXTEND_HANDS_STARTED = 'room:vote_extend_hands_started',
+  VOTE_EXTEND_HANDS_RESPONSE = 'room:vote_extend_hands_response',
+  VOTE_EXTEND_HANDS_ENDED = 'room:vote_extend_hands_ended',
 }

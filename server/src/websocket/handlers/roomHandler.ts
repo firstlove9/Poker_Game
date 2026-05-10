@@ -5,7 +5,7 @@ import { CreateRoomRequest, JoinRoomRequest, RoomStatus, PlayerRoomRole } from '
 import { Card, PlayerAction, PlayerStatus } from '../../types/poker';
 import { GameEngine, GameConfig } from '../../game/GameEngine';
 import { gameEngines } from './gameHandler';
-import { cleanupRoomLogs } from '../../room/ActionLogManager';
+import { addActionLog, cleanupRoomLogs } from '../../room/ActionLogManager';
 
 function safeCallback(callback: any, response: any): void {
   if (typeof callback === 'function') {
@@ -16,6 +16,10 @@ function safeCallback(callback: any, response: any): void {
 export function tryStartGame(roomId: string, roomManager: RoomManager, io: Server): boolean {
   const room = roomManager.getRoom(roomId);
   if (!room || room.status === RoomStatus.PLAYING) return false;
+
+  if (room.config.fixedHands && room.config.fixedHands > 0 && room.handCount >= room.config.fixedHands) {
+    return false;
+  }
 
   const readyPlayers = room.players.filter(p =>
     p.isReady && p.chips > 0 && p.playerRoomRole !== PlayerRoomRole.SPECTATOR && !p.isAfk
@@ -51,7 +55,32 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
     modifier: room.config.gameModifier,
   };
 
-  const dealerIndex = room.gameState ? (room.gameState.dealerIndex + 1) % readyPlayers.length : 0;
+  let dealerIndex = 0;
+  if (room.gameState) {
+    const prevDealerId = Object.entries(room.gameState.playerRoles || {}).find(([, role]: [string, any]) => role === 'dealer')?.[0];
+    if (prevDealerId) {
+      const prevDealerIdx = readyPlayers.findIndex((p: any) => p.id === prevDealerId);
+      if (prevDealerIdx >= 0) {
+        dealerIndex = (prevDealerIdx + 1) % readyPlayers.length;
+      } else {
+        const prevDealerRoomIdx = room.players.findIndex((p: any) => p.id === prevDealerId);
+        if (prevDealerRoomIdx >= 0) {
+          for (let i = 1; i <= room.players.length; i++) {
+            const candidate = room.players[(prevDealerRoomIdx + i) % room.players.length];
+            const candidateIdx = readyPlayers.findIndex((p: any) => p.id === candidate.id);
+            if (candidateIdx >= 0) {
+              dealerIndex = candidateIdx;
+              break;
+            }
+          }
+        } else {
+          dealerIndex = (room.gameState.dealerIndex + 1) % readyPlayers.length;
+        }
+      }
+    } else {
+      dealerIndex = (room.gameState.dealerIndex + 1) % readyPlayers.length;
+    }
+  }
   const gameEngine = new GameEngine(readyPlayers, dealerIndex, gameConfig);
 
   room.status = RoomStatus.PLAYING;
@@ -72,12 +101,31 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
 
   gameEngines.set(roomId, gameEngine);
 
+  room.handCount++;
+
+  const handId = room.gameState.handId;
+  const gs = room.gameState;
+  const enginePlayers = gameEngine.getPlayers();
+  const sbPlayer = enginePlayers[gs.smallBlindIndex % enginePlayers.length];
+  const bbPlayer = enginePlayers[gs.bigBlindIndex % enginePlayers.length];
+  if (sbPlayer) {
+    const sbAmount = gs.roundBets[sbPlayer.id] || 0;
+    if (sbAmount > 0) {
+      addActionLog(roomId, handId || '', sbPlayer.id, sbPlayer.name, 'small-blind', sbAmount, gs.phase);
+    }
+  }
+  if (bbPlayer) {
+    const bbAmount = gs.roundBets[bbPlayer.id] || 0;
+    if (bbAmount > 0) {
+      addActionLog(roomId, handId || '', bbPlayer.id, bbPlayer.name, 'big-blind', bbAmount, gs.phase);
+    }
+  }
+
   io.to(roomId).emit(ServerEvents.GAME_STARTED, {
     room: sanitizeRoom(room),
     gameState: sanitizeGameState(room.gameState),
   });
 
-  const handId = room.gameState.handId;
   setTimeout(() => {
     for (const player of room.players) {
       const cards = gameEngine.getPlayerCards(player.id);
@@ -287,6 +335,35 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
         if (room) {
           const player = room.players.find(p => p.id === playerId);
           if (player && player.playerRoomRole === PlayerRoomRole.BUSTED) {
+            const maxRebuy = room.config.maxRebuyCount;
+            const currentRebuy = room.playerRebuyCounts[playerId] || 0;
+            if (maxRebuy !== undefined && maxRebuy >= 0 && currentRebuy >= maxRebuy) {
+              player.playerRoomRole = PlayerRoomRole.SPECTATOR;
+              player.seatIndex = -1;
+              player.chips = 0;
+              player.isReady = false;
+              io.to(roomId).emit(ServerEvents.PLAYER_READY_CHANGED, {
+                playerId,
+                ready: false,
+                room: sanitizeRoom(room),
+              });
+
+              const activePlayers = room.players.filter((p: any) =>
+                p.playerRoomRole !== PlayerRoomRole.SPECTATOR && p.chips > 0
+              );
+              if (activePlayers.length <= 1 && room.players.filter((p: any) => p.playerRoomRole !== PlayerRoomRole.SPECTATOR).length <= 1) {
+                const winner = activePlayers[0] || null;
+                io.to(roomId).emit(ServerEvents.GAME_OVER, {
+                  winner: winner ? { id: winner.id, name: winner.name, chips: winner.chips } : null,
+                  room: sanitizeRoom(room),
+                });
+              } else {
+                tryStartGame(roomId, roomManager, io);
+              }
+
+              safeCallback(callback, { success: false, error: '补筹码次数已用完，已自动进入观战' });
+              return;
+            }
             safeCallback(callback, { success: false, error: '请先补筹码或选择不补' });
             return;
           }
@@ -474,6 +551,165 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
       safeCallback(callback, { success: true });
     } catch (error) {
       safeCallback(callback, { success: false, error: '操作失败' });
+    }
+  });
+
+  socket.on(ClientEvents.VOTE_EXTEND_HANDS, (callback?: (response: any) => void) => {
+    try {
+      const playerId = socket.data.playerId;
+      if (!playerId) {
+        safeCallback(callback, { success: false, error: '未登录' });
+        return;
+      }
+
+      const roomId = roomManager.getPlayerRoomId(playerId);
+      if (!roomId) {
+        safeCallback(callback, { success: false, error: '你不在任何房间中' });
+        return;
+      }
+
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        safeCallback(callback, { success: false, error: '房间不存在' });
+        return;
+      }
+
+      if (!room.config.fixedHands || room.config.fixedHands <= 0) {
+        safeCallback(callback, { success: false, error: '该房间未启用固定局数' });
+        return;
+      }
+
+      if (room.handCount < room.config.fixedHands) {
+        safeCallback(callback, { success: false, error: '尚未到达固定局数' });
+        return;
+      }
+
+      if (room.voteExtendHands) {
+        safeCallback(callback, { success: false, error: '已有进行中的投票' });
+        return;
+      }
+
+      const player = room.players.find(p => p.id === playerId);
+      if (!player) {
+        safeCallback(callback, { success: false, error: '玩家不在房间中' });
+        return;
+      }
+
+      room.voteExtendHands = {
+        initiatorId: playerId,
+        initiatorName: player.name,
+        votes: new Map([[playerId, true]]),
+        approved: false,
+        createdAt: Date.now(),
+        extendCount: 10,
+      };
+
+      io.to(roomId).emit(ServerEvents.VOTE_EXTEND_HANDS_STARTED, {
+        initiatorId: playerId,
+        initiatorName: player.name,
+        votes: Object.fromEntries(room.voteExtendHands.votes),
+        votedPlayers: room.voteExtendHands.votes.size,
+        totalPlayers: room.players.filter((p: any) => p.isOnline && p.playerRoomRole !== PlayerRoomRole.SPECTATOR).length,
+        createdAt: room.voteExtendHands.createdAt,
+        extendCount: 10,
+        room: sanitizeRoom(room),
+      });
+
+      safeCallback(callback, { success: true });
+    } catch (error) {
+      safeCallback(callback, { success: false, error: '发起投票失败' });
+    }
+  });
+
+  socket.on(ClientEvents.VOTE_EXTEND_HANDS_RESPONSE, (data: { approve: boolean }, callback?: (response: any) => void) => {
+    try {
+      const playerId = socket.data.playerId;
+      if (!playerId) {
+        safeCallback(callback, { success: false, error: '未登录' });
+        return;
+      }
+
+      const roomId = roomManager.getPlayerRoomId(playerId);
+      if (!roomId) {
+        safeCallback(callback, { success: false, error: '你不在任何房间中' });
+        return;
+      }
+
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        safeCallback(callback, { success: false, error: '房间不存在' });
+        return;
+      }
+
+      if (!room.voteExtendHands) {
+        safeCallback(callback, { success: false, error: '没有进行中的投票' });
+        return;
+      }
+
+      const player = room.players.find(p => p.id === playerId);
+      if (!player) {
+        safeCallback(callback, { success: false, error: '玩家不在房间中' });
+        return;
+      }
+
+      room.voteExtendHands.votes.set(playerId, data.approve);
+
+      io.to(roomId).emit(ServerEvents.VOTE_EXTEND_HANDS_RESPONSE, {
+        playerId,
+        approve: data.approve,
+        votes: Object.fromEntries(room.voteExtendHands.votes),
+        votedPlayers: room.voteExtendHands.votes.size,
+        totalPlayers: room.players.filter((p: any) => p.isOnline && p.playerRoomRole !== PlayerRoomRole.SPECTATOR).length,
+        room: sanitizeRoom(room),
+      });
+
+      const eligiblePlayers = room.players.filter((p: any) => p.isOnline && p.playerRoomRole !== PlayerRoomRole.SPECTATOR);
+      const approveCount = Array.from(room.voteExtendHands.votes.values()).filter(v => v).length;
+      const rejectCount = Array.from(room.voteExtendHands.votes.values()).filter(v => !v).length;
+
+      if (approveCount >= 2) {
+        room.config.fixedHands! += room.voteExtendHands.extendCount;
+        const extendCount = room.voteExtendHands.extendCount;
+        room.voteExtendHands = undefined;
+
+        io.to(roomId).emit(ServerEvents.VOTE_EXTEND_HANDS_ENDED, {
+          approved: true,
+          newFixedHands: room.config.fixedHands,
+          extendCount,
+          room: sanitizeRoom(room),
+        });
+      } else if (rejectCount >= 1 && (eligiblePlayers.length - rejectCount) < 2) {
+        room.voteExtendHands = undefined;
+
+        io.to(roomId).emit(ServerEvents.VOTE_EXTEND_HANDS_ENDED, {
+          approved: false,
+          room: sanitizeRoom(room),
+        });
+      } else if (room.voteExtendHands && room.players.every(p => room.voteExtendHands!.votes.has(p.id) || !p.isOnline || p.playerRoomRole === PlayerRoomRole.SPECTATOR)) {
+        if (approveCount >= 2) {
+          room.config.fixedHands! += room.voteExtendHands.extendCount;
+          const extendCount = room.voteExtendHands.extendCount;
+          room.voteExtendHands = undefined;
+
+          io.to(roomId).emit(ServerEvents.VOTE_EXTEND_HANDS_ENDED, {
+            approved: true,
+            newFixedHands: room.config.fixedHands,
+            extendCount,
+            room: sanitizeRoom(room),
+          });
+        } else {
+          room.voteExtendHands = undefined;
+
+          io.to(roomId).emit(ServerEvents.VOTE_EXTEND_HANDS_ENDED, {
+            approved: false,
+            room: sanitizeRoom(room),
+          });
+        }
+      }
+
+      safeCallback(callback, { success: true });
+    } catch (error) {
+      safeCallback(callback, { success: false, error: '投票失败' });
     }
   });
 
@@ -786,6 +1022,8 @@ function sanitizeRoom(room: any): any {
       playerRoomRole: p.playerRoomRole,
     })),
     scoreboardEntries: room.scoreboardEntries || [],
+    playerRebuyCounts: room.playerRebuyCounts || {},
+    handCount: room.handCount || 0,
   };
 }
 

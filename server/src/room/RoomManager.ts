@@ -44,7 +44,14 @@ export class RoomManager {
         throw new Error(nameError);
       }
     }
+
+    if (request.fixedHands !== undefined && request.fixedHands > 0 && request.fixedHands < 3) {
+      throw new Error('固定局数最少3局');
+    }
     
+    if (request.maxRebuyCount !== undefined && request.maxRebuyCount < 0) {
+      throw new Error('补筹码次数不能为负数');
+    }
     const config: RoomConfig = {
       roomId,
       roomName: request.roomName || `房间 ${roomId}`,
@@ -69,6 +76,8 @@ export class RoomManager {
       gameVariant: request.gameVariant || GameVariant.TEXAS_NLHE,
       gameModifier: request.gameModifier || GameModifier.NONE,
       mixedRotation: request.mixedRotation,
+      fixedHands: request.fixedHands,
+      maxRebuyCount: request.maxRebuyCount,
     };
 
     const room: Room = {
@@ -77,6 +86,8 @@ export class RoomManager {
       players: [],
       scoreboardEntries: [],
       spectators: [],
+      handCount: 0,
+      playerRebuyCounts: {},
     };
 
     this.rooms.set(roomId, room);
@@ -198,6 +209,9 @@ export class RoomManager {
     };
 
     room.players.push(player);
+    if (!room.playerRebuyCounts[playerId]) {
+      room.playerRebuyCounts[playerId] = 0;
+    }
     this.playerRooms.set(playerId, roomId);
     this.syncScoreboard(roomId);
 
@@ -362,9 +376,18 @@ export class RoomManager {
       return { success: false, error: '玩家不在房间中' };
     }
 
+    if (room.config.maxRebuyCount !== undefined && room.config.maxRebuyCount >= 0) {
+      const currentCount = room.playerRebuyCounts[playerId] || 0;
+      if (currentCount >= room.config.maxRebuyCount) {
+        return { success: false, error: `已达到最大补筹码次数(${room.config.maxRebuyCount}次)` };
+      }
+    }
+
     const amount = room.config.buyInMin;
     player.chips += amount;
     player.totalBuyIn += amount;
+
+    room.playerRebuyCounts[playerId] = (room.playerRebuyCounts[playerId] || 0) + 1;
 
     if (player.playerRoomRole === PlayerRoomRole.BUSTED && player.chips > 0) {
       player.playerRoomRole = PlayerRoomRole.ACTIVE;

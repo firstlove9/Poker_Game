@@ -69,6 +69,7 @@ export default function ChatBox() {
   const [showEmojis, setShowEmojis] = useState(false)
   const [activeTab, setActiveTab] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const emojiPanelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -81,7 +82,9 @@ export default function ChatBox() {
   }, [on, off, addMessage])
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
   }, [messages])
 
   useEffect(() => {
@@ -116,7 +119,7 @@ export default function ChatBox() {
         <h3 className="text-white font-bold text-sm">💬 聊天</h3>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2 space-y-2">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-2 space-y-2">
         {messages.length === 0 ? (
           <p className="text-white/40 text-center text-xs py-4">暂无消息</p>
         ) : (
@@ -199,6 +202,8 @@ export default function ChatBox() {
             placeholder="输入消息..."
             className="flex-1 px-2 py-1.5 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-yellow-400 text-xs"
             maxLength={100}
+            autoComplete="off"
+            enterKeyHint="send"
           />
           <button
             onClick={handleSend}

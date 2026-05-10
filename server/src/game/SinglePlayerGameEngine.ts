@@ -43,6 +43,7 @@ export class SinglePlayerGameEngine {
   private players: RoomPlayer[];
   private config: GameConfig;
   private variantRules: VariantRuleInfo;
+  private isShortDeck: boolean = false;
   private humanPlayerId: string;
   private npcTimeouts: NodeJS.Timeout[] = [];
   private isRunning: boolean = false;
@@ -55,6 +56,7 @@ export class SinglePlayerGameEngine {
     this.humanPlayerId = config.humanPlayerId;
     this.config = gameConfig;
     this.variantRules = VARIANT_RULES[gameConfig.variant || GameVariant.TEXAS_NLHE];
+    this.isShortDeck = (gameConfig.variant || GameVariant.TEXAS_NLHE) === GameVariant.SIX_PLUS;
     this.deck = new Deck(this.variantRules.deckRanks);
     
     this.players = this.createPlayers(config);
@@ -631,12 +633,12 @@ export class SinglePlayerGameEngine {
         const variant = this.config.variant || GameVariant.TEXAS_NLHE;
         const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD];
         if (omahaVariants.includes(variant)) {
-          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
         } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
-          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
         } else {
           const allCards = [...holeCards, ...communityCards];
-          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder, this.isShortDeck);
         }
         playerHands.set(player.id, { hand, cards: [...holeCards, ...communityCards] });
       }
@@ -761,12 +763,12 @@ export class SinglePlayerGameEngine {
         const variant = this.config.variant || GameVariant.TEXAS_NLHE;
         const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD];
         if (omahaVariants.includes(variant)) {
-          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
         } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
-          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
         } else {
           const allCards = [...holeCards, ...communityCards];
-          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder, this.isShortDeck);
         }
         playerHands.set(player.id, { hand, cards: [...holeCards, ...communityCards] });
       }

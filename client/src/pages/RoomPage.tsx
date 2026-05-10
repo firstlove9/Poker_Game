@@ -378,6 +378,11 @@ export default function RoomPage() {
 
           <div className="text-center">
             <h1 className="text-2xl font-bold text-white">{currentRoom.config.roomName}</h1>
+            {currentRoom.config.fixedHands && currentRoom.config.fixedHands > 0 && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-gold/20 text-gold font-medium ml-2">
+                {currentRoom.handCount || 0}/{currentRoom.config.fixedHands}局
+              </span>
+            )}
             <p className="text-white/40 text-sm">ID: {roomId}</p>
           </div>
 

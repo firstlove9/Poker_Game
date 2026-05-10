@@ -29,6 +29,10 @@ export default function CreateRoomModal({ onClose, onCreate }: CreateRoomModalPr
     gameVariant: GameVariant.TEXAS_NLHE,
     gameModifier: GameModifier.NONE,
     mixedRotation: null as MixedRotationConfig | null,
+    fixedHandsEnabled: false,
+    fixedHands: 40,
+    maxRebuyCountEnabled: false,
+    maxRebuyCount: 5,
   })
   const [roomNameError, setRoomNameError] = useState('')
   const [showVariantSelector, setShowVariantSelector] = useState(false)
@@ -48,7 +52,12 @@ export default function CreateRoomModal({ onClose, onCreate }: CreateRoomModalPr
       }
     }
     setRoomNameError('')
-    onCreate(config)
+    const { fixedHandsEnabled, maxRebuyCountEnabled, ...rest } = config
+    onCreate({
+      ...rest,
+      fixedHands: fixedHandsEnabled ? config.fixedHands : undefined,
+      maxRebuyCount: maxRebuyCountEnabled ? config.maxRebuyCount : undefined,
+    })
   }
 
   return (
@@ -247,6 +256,78 @@ export default function CreateRoomModal({ onClose, onCreate }: CreateRoomModalPr
               />
             </motion.div>
           )}
+
+          <div className="border-t border-white/10 pt-4 space-y-4">
+            <div>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.fixedHandsEnabled}
+                  onChange={(e) => setConfig({ ...config, fixedHandsEnabled: e.target.checked })}
+                  className="w-5 h-5 accent-gold"
+                />
+                <span className="text-white/80 flex items-center gap-2">
+                  🎯 固定局数
+                </span>
+              </label>
+              <p className="text-white/40 text-xs ml-8 mt-0.5">到达固定局数后需投票才能继续</p>
+              {config.fixedHandsEnabled && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  className="ml-8 mt-2"
+                >
+                  <label className="block text-white/80 text-sm mb-2">固定局数 <span className="text-white/40 text-xs">（最少3局）</span></label>
+                  <input
+                    type="number"
+                    value={config.fixedHands}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value) || 3
+                      setConfig({ ...config, fixedHands: Math.max(3, val) })
+                    }}
+                    className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg 
+                               text-white focus:outline-none focus:border-gold"
+                    min={3}
+                  />
+                </motion.div>
+              )}
+            </div>
+
+            <div>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.maxRebuyCountEnabled}
+                  onChange={(e) => setConfig({ ...config, maxRebuyCountEnabled: e.target.checked })}
+                  className="w-5 h-5 accent-gold"
+                />
+                <span className="text-white/80 flex items-center gap-2">
+                  🔒 限制补筹码次数
+                </span>
+              </label>
+              <p className="text-white/40 text-xs ml-8 mt-0.5">每个玩家独立计数，到达后不能再补筹码</p>
+              {config.maxRebuyCountEnabled && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  className="ml-8 mt-2"
+                >
+                  <label className="block text-white/80 text-sm mb-2">最大补筹码次数 <span className="text-white/40 text-xs">（0次=不允许补筹码）</span></label>
+                  <input
+                    type="number"
+                    value={config.maxRebuyCount}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value) || 0
+                      setConfig({ ...config, maxRebuyCount: Math.max(0, val) })
+                    }}
+                    className="w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg 
+                               text-white focus:outline-none focus:border-gold"
+                    min={0}
+                  />
+                </motion.div>
+              )}
+            </div>
+          </div>
 
           <div className="flex gap-3 pt-4">
             <button

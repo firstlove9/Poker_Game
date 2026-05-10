@@ -42,6 +42,7 @@ export class GameEngine {
   private players: RoomPlayer[];
   private config: GameConfig;
   private variantRules: VariantRuleInfo;
+  private isShortDeck: boolean = false;
   private hasActedThisRound: Set<string> = new Set();
   private lastAggressorIndex: number = -1;
   private actionCount: number = 0;
@@ -51,6 +52,7 @@ export class GameEngine {
     this.players = players.filter(p => p.isReady && p.chips > 0);
     this.config = config;
     this.variantRules = VARIANT_RULES[config.variant || GameVariant.TEXAS_NLHE];
+    this.isShortDeck = (config.variant || GameVariant.TEXAS_NLHE) === GameVariant.SIX_PLUS;
     this.deck = new Deck(this.variantRules.deckRanks);
 
     const playerIds = this.players.map(p => p.id);
@@ -571,12 +573,12 @@ export class GameEngine {
           const variant = this.config.variant || GameVariant.TEXAS_NLHE;
           const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD, GameVariant.OMAHA_THREE_BOARD];
           if (omahaVariants.includes(variant)) {
-            hand = HandEvaluator.evaluateOmaha(holeCards, board, this.variantRules.handRankOrder);
+            hand = HandEvaluator.evaluateOmaha(holeCards, board, this.variantRules.handRankOrder, this.isShortDeck);
           } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
-            hand = HandEvaluator.evaluateCrazyPineapple(holeCards, board, this.variantRules.handRankOrder);
+            hand = HandEvaluator.evaluateCrazyPineapple(holeCards, board, this.variantRules.handRankOrder, this.isShortDeck);
           } else {
             const allCards = [...holeCards, ...board];
-            hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+            hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder, this.isShortDeck);
           }
           playerHands.set(player.id, { hand, cards: [...holeCards, ...board] });
         }
@@ -979,6 +981,8 @@ export class GameEngine {
 
   private endHand(): void {
     this.collectBets();
+    this.state.roundBets = {};
+    this.state.totalPot = this.calcTotalPot();
 
     const activePlayers = this.players.filter(p =>
       this.state.playerStatus[p.id] !== PlayerStatus.FOLDED
@@ -1027,12 +1031,12 @@ export class GameEngine {
         const variant = this.config.variant || GameVariant.TEXAS_NLHE;
         const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD, GameVariant.OMAHA_THREE_BOARD];
         if (omahaVariants.includes(variant)) {
-          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
         } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
-          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
         } else {
           const allCards = [...holeCards, ...communityCards];
-          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder, this.isShortDeck);
         }
         playerHands.set(player.id, { hand, cards: [...holeCards, ...communityCards] });
       }
@@ -1092,10 +1096,10 @@ export class GameEngine {
         if (holeCards && board.length >= 3) {
           let hand: HandEvaluation;
           if (isOmaha) {
-            hand = HandEvaluator.evaluateOmaha(holeCards, board, this.variantRules.handRankOrder);
+            hand = HandEvaluator.evaluateOmaha(holeCards, board, this.variantRules.handRankOrder, this.isShortDeck);
           } else {
             const allCards = [...holeCards, ...board];
-            hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+            hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder, this.isShortDeck);
           }
           playerHands.set(player.id, hand);
         }
@@ -1218,12 +1222,12 @@ export class GameEngine {
         const variant = this.config.variant || GameVariant.TEXAS_NLHE;
         const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD, GameVariant.OMAHA_THREE_BOARD];
         if (omahaVariants.includes(variant)) {
-          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
         } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
-          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
         } else {
           const allCards = [...holeCards, ...communityCards];
-          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+          hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder, this.isShortDeck);
         }
         playerHands.set(player.id, { hand, cards: [...holeCards, ...communityCards] });
       }
@@ -1427,10 +1431,10 @@ export class GameEngine {
         if (holeCards && board.length >= 3) {
           let hand: HandEvaluation;
           if (isOmaha) {
-            hand = HandEvaluator.evaluateOmaha(holeCards, board, this.variantRules.handRankOrder);
+            hand = HandEvaluator.evaluateOmaha(holeCards, board, this.variantRules.handRankOrder, this.isShortDeck);
           } else {
             const allCards = [...holeCards, ...board];
-            hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder);
+            hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder, this.isShortDeck);
           }
           playerHands.set(player.id, hand);
           if (!playerBestHand.has(player.id) || HandEvaluator.compareHands(hand, playerBestHand.get(player.id)!, this.variantRules.handRankOrder) > 0) {

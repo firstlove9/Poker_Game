@@ -93,7 +93,18 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
         room: sanitizeRoom(currentRoom),
       });
 
-      tryStartGame(roomId, roomManager, io);
+      const activePlayers = currentRoom.players.filter((p: any) =>
+        p.playerRoomRole !== PlayerRoomRole.SPECTATOR && p.chips > 0
+      );
+      if (activePlayers.length <= 1 && currentRoom.players.filter((p: any) => p.playerRoomRole !== PlayerRoomRole.SPECTATOR).length <= 1) {
+        const winner = activePlayers[0] || null;
+        io.to(roomId).emit(ServerEvents.GAME_OVER, {
+          winner: winner ? { id: winner.id, name: winner.name, chips: winner.chips } : null,
+          room: sanitizeRoom(currentRoom),
+        });
+      } else {
+        tryStartGame(roomId, roomManager, io);
+      }
     }, 15000);
   }
 
@@ -788,6 +799,17 @@ function sanitizeRoom(room: any): any {
       playerRoomRole: p.playerRoomRole,
     })),
     scoreboardEntries: room.scoreboardEntries || [],
+    handCount: room.handCount || 0,
+    playerRebuyCounts: room.playerRebuyCounts || {},
+    voteExtendHands: room.voteExtendHands ? {
+      initiatorId: room.voteExtendHands.initiatorId,
+      initiatorName: room.voteExtendHands.initiatorName,
+      votes: Object.fromEntries(room.voteExtendHands.votes),
+      votedPlayers: room.voteExtendHands.votes.size,
+      totalPlayers: room.players.filter((p: any) => p.isOnline && p.playerRoomRole !== 'spectator').length,
+      createdAt: room.voteExtendHands.createdAt,
+      extendCount: room.voteExtendHands.extendCount,
+    } : undefined,
   };
 }
 

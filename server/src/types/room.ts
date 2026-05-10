@@ -13,6 +13,8 @@ export interface CreateRoomRequest {
   gameVariant?: GameVariant;
   gameModifier?: GameModifier;
   mixedRotation?: MixedRotationConfig;
+  fixedHands?: number;
+  maxRebuyCount?: number;
 }
 
 export interface JoinRoomRequest {
@@ -42,6 +44,8 @@ export interface RoomConfig {
   gameVariant: GameVariant;
   gameModifier: GameModifier;
   mixedRotation?: MixedRotationConfig;
+  fixedHands?: number;
+  maxRebuyCount?: number;
 }
 
 export enum RoomStatus {
@@ -90,6 +94,16 @@ export interface Room {
   scoreboardEntries: ScoreboardEntry[];
   gameState?: GameState;
   spectators: string[];
+  handCount: number;
+  playerRebuyCounts: Record<string, number>;
+  voteExtendHands?: {
+    initiatorId: string;
+    initiatorName: string;
+    votes: Map<string, boolean>;
+    approved: boolean;
+    createdAt: number;
+    extendCount: number;
+  };
   voteLeave?: {
     initiatorId: string;
     initiatorName: string;

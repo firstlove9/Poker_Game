@@ -37,9 +37,12 @@ function sanitizeRoom(room: any): any {
       isReady: p.isReady,
       isOnline: p.isOnline,
       isAfk: p.isAfk,
+      hasPlayedHand: p.hasPlayedHand,
       playerRoomRole: p.playerRoomRole,
     })),
     scoreboardEntries: room.scoreboardEntries || [],
+    playerRebuyCounts: room.playerRebuyCounts || {},
+    handCount: room.handCount || 0,
   };
 }
 

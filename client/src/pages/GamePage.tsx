@@ -71,6 +71,17 @@ export default function GamePage() {
   const [voteCooldownRemaining, setVoteCooldownRemaining] = useState(0)
   const [voteCountdown, setVoteCountdown] = useState(15)
 
+  const [voteExtendInfo, setVoteExtendInfo] = useState<{
+    initiatorId: string
+    initiatorName: string
+    votes: Record<string, boolean>
+    totalPlayers: number
+    votedPlayers: number
+    createdAt?: number
+    extendCount: number
+  } | null>(null)
+  const [showVoteExtendModal, setShowVoteExtendModal] = useState(false)
+
   const [showRunItTwiceDialog, setShowRunItTwiceDialog] = useState(false)
   const [runItTwiceMyChoice, setRunItTwiceMyChoice] = useState<RunItTwiceChoice | null>(null)
   const [runItTwiceOtherChoice, setRunItTwiceOtherChoice] = useState<RunItTwiceChoice | null>(null)
@@ -372,6 +383,29 @@ export default function GamePage() {
       }
     }
 
+    const handleVoteExtendHandsStarted = (data: any) => {
+      setVoteExtendInfo(data)
+      setShowVoteExtendModal(true)
+    }
+
+    const handleVoteExtendHandsResponseEvent = (data: any) => {
+      setVoteExtendInfo((prev: any) => prev ? {
+        ...prev,
+        votes: data.votes,
+        votedPlayers: data.votedPlayers,
+      } : null)
+    }
+
+    const handleVoteExtendHandsEnded = (data: any) => {
+      setShowVoteExtendModal(false)
+      setVoteExtendInfo(null)
+      if (data.approved) {
+        addToast(`投票通过！局数增加${data.extendCount}局，当前固定${data.newFixedHands}局`, 'info')
+      } else {
+        addToast('加局投票未通过，房间已结束', 'error')
+      }
+    }
+
     const handleRoomLeft = (data: any) => {
       if (data.reason === 'vote') {
         clearLogStorage()
@@ -614,6 +648,9 @@ export default function GamePage() {
     on(ServerEvents.VOTE_LEAVE_STARTED, handleVoteLeaveStarted)
     on(ServerEvents.VOTE_LEAVE_RESPONSE, handleVoteLeaveResponseEvent)
     on(ServerEvents.VOTE_LEAVE_ENDED, handleVoteLeaveEnded)
+    on(ServerEvents.VOTE_EXTEND_HANDS_STARTED, handleVoteExtendHandsStarted)
+    on(ServerEvents.VOTE_EXTEND_HANDS_RESPONSE, handleVoteExtendHandsResponseEvent)
+    on(ServerEvents.VOTE_EXTEND_HANDS_ENDED, handleVoteExtendHandsEnded)
     on(ServerEvents.ROOM_LEFT, handleRoomLeft)
     on(ServerEvents.RUN_IT_TWICE_ASK, handleRunItTwiceAsk)
     on(ServerEvents.RUN_IT_TWICE_CHOICE_RESULT, handleRunItTwiceChoiceResult)
@@ -643,6 +680,9 @@ export default function GamePage() {
       off(ServerEvents.VOTE_LEAVE_STARTED, handleVoteLeaveStarted)
       off(ServerEvents.VOTE_LEAVE_RESPONSE, handleVoteLeaveResponseEvent)
       off(ServerEvents.VOTE_LEAVE_ENDED, handleVoteLeaveEnded)
+      off(ServerEvents.VOTE_EXTEND_HANDS_STARTED, handleVoteExtendHandsStarted)
+      off(ServerEvents.VOTE_EXTEND_HANDS_RESPONSE, handleVoteExtendHandsResponseEvent)
+      off(ServerEvents.VOTE_EXTEND_HANDS_ENDED, handleVoteExtendHandsEnded)
       off(ServerEvents.ROOM_LEFT, handleRoomLeft)
       off(ServerEvents.RUN_IT_TWICE_ASK, handleRunItTwiceAsk)
       off(ServerEvents.RUN_IT_TWICE_CHOICE_RESULT, handleRunItTwiceChoiceResult)
@@ -806,6 +846,11 @@ export default function GamePage() {
 
   const handleRebuy = async () => {
     if (isSubmitting) return
+    if (maxRebuyReached) {
+      addToast('补筹码次数已用完，将进入观战状态', 'info')
+      await handleDeclineRebuy()
+      return
+    }
     setIsSubmitting(true)
     try {
       const result = await emit(ClientEvents.GET_CHIPS)
@@ -1041,6 +1086,8 @@ export default function GamePage() {
   }, [isBusted])
   const isAfkSpectator = isAfk && (myPlayerRole === 'active' || myPlayerRole === 'seated' || myPlayerRole === 'busted')
   const showRebuyButton = isBusted && !isAfk
+  const myRebuyCount = (currentRoom?.playerRebuyCounts && myPlayerId) ? (currentRoom.playerRebuyCounts[myPlayerId] || 0) : 0
+  const maxRebuyReached = currentRoom?.config.maxRebuyCount !== undefined && currentRoom.config.maxRebuyCount >= 0 && myRebuyCount >= currentRoom.config.maxRebuyCount
   const myPlayerNeedVote = myPlayerRole === 'active'
     && myPlayerId
     && (currentRoom?.status === 'playing' || (currentRoom?.status === 'waiting' && gameState?.phase === 'ended'))
@@ -1061,6 +1108,11 @@ export default function GamePage() {
             <div className="flex justify-between items-center px-4 py-2 bg-black/30">
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-bold text-white">{currentRoom.config.roomName}</h1>
+                {currentRoom.config.fixedHands && currentRoom.config.fixedHands > 0 && (
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-gold/20 text-gold font-medium">
+                    {currentRoom.handCount || 0}/{currentRoom.config.fixedHands}局
+                  </span>
+                )}
                 <span className="text-sm text-white/60">
                   {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].icon}
                   {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].name}
@@ -1101,7 +1153,20 @@ export default function GamePage() {
                   ))}
                 </div>
                 <div className="flex gap-3 justify-center">
-                  {!isReady && (
+                  {currentRoom.config.fixedHands && currentRoom.config.fixedHands > 0 && (currentRoom.handCount || 0) >= currentRoom.config.fixedHands ? (
+                    <button
+                      onClick={async () => {
+                        const result = await emit(ClientEvents.VOTE_EXTEND_HANDS)
+                        if (!result?.success) {
+                          addToast(result?.error || '发起投票失败', 'error')
+                        }
+                      }}
+                      disabled={isSubmitting}
+                      className={`px-6 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-bold text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      🎯 投票加10局
+                    </button>
+                  ) : !isReady ? (
                     <button
                       onClick={handleReady}
                       disabled={isSubmitting}
@@ -1109,8 +1174,7 @@ export default function GamePage() {
                     >
                       准备
                     </button>
-                  )}
-                  {isReady && (
+                  ) : (
                     <button
                       onClick={handleCancelReady}
                       disabled={isSubmitting}
@@ -1238,6 +1302,74 @@ export default function GamePage() {
           </div>
         </div>
       )}
+
+      {showVoteExtendModal && voteExtendInfo && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
+          <div className="bg-gray-800 border border-gray-600 rounded-xl w-full max-w-md p-6">
+            <h2 className="text-2xl font-bold text-white mb-4 text-center">
+              🎯 投票加局
+            </h2>
+            <p className="text-white/80 text-center mb-4">
+              <span className="text-yellow-400 font-bold">{voteExtendInfo.initiatorName}</span> 发起增加 <span className="text-gold font-bold">{voteExtendInfo.extendCount}</span> 局投票
+            </p>
+
+            <div className="mb-6">
+              <p className="text-white/60 text-sm mb-3">投票进度: {voteExtendInfo.votedPlayers}/{voteExtendInfo.totalPlayers}（至少2人同意）</p>
+              <div className="space-y-2">
+                {currentRoom.players.map((player: any) => {
+                  const vote = voteExtendInfo.votes[player.id]
+                  return (
+                    <div key={player.id} className="flex justify-between items-center text-white/80">
+                      <span>
+                        {player.name}
+                        {player.id === myPlayerId && ' (我)'}
+                        {player.id === voteExtendInfo.initiatorId && ' [发起者]'}
+                      </span>
+                      {vote === true && <span className="text-green-400">✓ 同意</span>}
+                      {vote === false && <span className="text-red-400">✗ 拒绝</span>}
+                      {vote === undefined && <span className="text-white/40">等待中...</span>}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {voteExtendInfo.votes[myPlayerId || ''] === undefined && (
+              <div className="flex gap-3">
+                <button
+                  onClick={async () => {
+                    const result = await emit(ClientEvents.VOTE_EXTEND_HANDS_RESPONSE, { approve: true })
+                    if (!result?.success) {
+                      addToast(result?.error || '投票失败', 'error')
+                    }
+                  }}
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold transition-colors"
+                >
+                  ✓ 同意加局
+                </button>
+                <button
+                  onClick={async () => {
+                    const result = await emit(ClientEvents.VOTE_EXTEND_HANDS_RESPONSE, { approve: false })
+                    if (!result?.success) {
+                      addToast(result?.error || '投票失败', 'error')
+                    }
+                  }}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-bold transition-colors"
+                >
+                  ✗ 拒绝加局
+                </button>
+              </div>
+            )}
+            {voteExtendInfo.votes[myPlayerId || ''] === false && (
+              <p className="text-center text-red-400 text-sm">你已拒绝加局，可以离开房间或以观战身份继续</p>
+            )}
+            {voteExtendInfo.votes[myPlayerId || ''] === true && (
+              <p className="text-center text-green-400 text-sm">你已同意加局，等待其他玩家投票...</p>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="h-full flex flex-col">
         {isReconnecting && (
           <div className="bg-red-600 text-white text-center py-2 text-sm font-bold animate-pulse">
@@ -1252,6 +1384,11 @@ export default function GamePage() {
         <div className="flex justify-between items-center px-2 md:px-4 py-1 md:py-2 bg-black/30">
           <div className="flex items-center gap-1 md:gap-2 min-w-0 flex-1">
             <h1 className="text-base md:text-lg font-bold text-white truncate">{currentRoom.config.roomName}</h1>
+            {currentRoom.config.fixedHands && currentRoom.config.fixedHands > 0 && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-gold/20 text-gold font-medium whitespace-nowrap">
+                {currentRoom.handCount || 0}/{currentRoom.config.fixedHands}局
+              </span>
+            )}
             <span className="text-xs md:text-sm text-white/60 whitespace-nowrap">
               {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].icon}
               {VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].name}
@@ -1838,13 +1975,17 @@ export default function GamePage() {
                 </button>
               ) : isSpectatorFromBust ? (
                 <>
-                  <button
-                    onClick={handleRebuy}
-                    disabled={isSubmitting}
-                    className={`px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    补筹码
-                  </button>
+                  {maxRebuyReached ? (
+                    <span className="text-orange-400 text-xs md:text-sm">🔒 补筹码次数已用完</span>
+                  ) : (
+                    <button
+                      onClick={handleRebuy}
+                      disabled={isSubmitting}
+                      className={`px-3 md:px-4 py-1.5 md:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      补筹码
+                    </button>
+                  )}
                 </>
               ) : !isReady ? (
                 <button
@@ -1899,7 +2040,7 @@ export default function GamePage() {
                     {rebuyCountdown > 0 && (
                       <span className="text-orange-400 text-xs md:text-sm self-center font-bold">⏱ {rebuyCountdown}s</span>
                     )}
-                    {(showRebuyButton || isSpectatorFromBust) && (
+                    {(showRebuyButton || isSpectatorFromBust) && !maxRebuyReached && (
                       <button
                         onClick={handleRebuy}
                         disabled={isSubmitting}
@@ -1907,6 +2048,9 @@ export default function GamePage() {
                       >
                         补筹码
                       </button>
+                    )}
+                    {maxRebuyReached && (showRebuyButton || isSpectatorFromBust) && (
+                      <span className="text-orange-400 text-xs md:text-sm self-center">🔒 补筹码次数已用完({myRebuyCount}/{currentRoom.config.maxRebuyCount})</span>
                     )}
                     {isBusted && !isAfk && (
                       <button
@@ -1925,6 +2069,19 @@ export default function GamePage() {
                     className={`px-3 md:px-4 py-1.5 md:py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
                     取消准备
+                  </button>
+                ) : currentRoom.config.fixedHands && currentRoom.config.fixedHands > 0 && (currentRoom.handCount || 0) >= currentRoom.config.fixedHands ? (
+                  <button
+                    onClick={async () => {
+                      const result = await emit(ClientEvents.VOTE_EXTEND_HANDS)
+                      if (!result?.success) {
+                        addToast(result?.error || '发起投票失败', 'error')
+                      }
+                    }}
+                    disabled={isSubmitting}
+                    className={`px-3 md:px-4 py-1.5 md:py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-bold text-xs md:text-sm ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    🎯 投票加10局
                   </button>
                 ) : (
                   <button
@@ -2078,7 +2235,7 @@ export default function GamePage() {
                     {rebuyCountdown > 0 && (
                       <span className="text-orange-400 text-sm md:text-lg self-center font-bold">⏱ {rebuyCountdown}s</span>
                     )}
-                    {(showRebuyButton || isSpectatorFromBust) && (
+                    {(showRebuyButton || isSpectatorFromBust) && !maxRebuyReached && (
                       <button
                         onClick={handleRebuy}
                         disabled={isSubmitting}
@@ -2086,6 +2243,9 @@ export default function GamePage() {
                       >
                         补筹码
                       </button>
+                    )}
+                    {maxRebuyReached && (showRebuyButton || isSpectatorFromBust) && (
+                      <span className="text-orange-400 text-sm md:text-lg self-center">🔒 补筹码次数已用完({myRebuyCount}/{currentRoom.config.maxRebuyCount})</span>
                     )}
                     {isBusted && !isAfk && (
                       <button
@@ -2096,6 +2256,27 @@ export default function GamePage() {
                         不补（观战）
                       </button>
                     )}
+                  </>
+                ) : currentRoom.config.fixedHands && currentRoom.config.fixedHands > 0 && (currentRoom.handCount || 0) >= currentRoom.config.fixedHands ? (
+                  <>
+                    <button
+                      onClick={async () => {
+                        const result = await emit(ClientEvents.VOTE_EXTEND_HANDS)
+                        if (!result?.success) {
+                          addToast(result?.error || '发起投票失败', 'error')
+                        }
+                      }}
+                      disabled={isSubmitting}
+                      className={`flex-1 px-3 md:px-6 py-2 md:py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      🎯 投票加10局
+                    </button>
+                    <button
+                      onClick={() => { setShowResult(false); setShowActionLog(true) }}
+                      className={`px-3 md:px-6 py-2 md:py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      📋 牌局记录
+                    </button>
                   </>
                 ) : (
                   <button
@@ -2398,6 +2579,9 @@ export default function GamePage() {
                             <div className="text-white/40 text-[10px] md:text-xs">
                               总买入: ${p.totalBuyIn || initialChips}
                               {rebuyCount > 0 && <span className="text-orange-400 ml-1">补充{rebuyCount}次</span>}
+                              {currentRoom.config.maxRebuyCount !== undefined && currentRoom.config.maxRebuyCount >= 0 && (
+                                <span className="text-white/30 ml-1">({currentRoom.playerRebuyCounts?.[p.id] || 0}/{currentRoom.config.maxRebuyCount})</span>
+                              )}
                             </div>
                           </div>
                         </div>

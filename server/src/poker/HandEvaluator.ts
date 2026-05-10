@@ -6,7 +6,7 @@ export class HandEvaluator {
     '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14,
   };
 
-  static evaluate(cards: Card[], handRankOrder?: HandRank[]): HandEvaluation {
+  static evaluate(cards: Card[], handRankOrder?: HandRank[], isShortDeck?: boolean): HandEvaluation {
     if (cards.length < 5) {
       throw new Error('Need at least 5 cards to evaluate');
     }
@@ -24,7 +24,7 @@ export class HandEvaluator {
     let bestValue = 0;
 
     for (const combo of combinations) {
-      const { rank, value } = this.evaluateFiveCards(combo);
+      const { rank, value } = this.evaluateFiveCards(combo, isShortDeck);
       const cmp = this.compareRankValue(rank, value, bestRank, bestValue, rankOrder);
       if (cmp > 0) {
         bestRank = rank;
@@ -53,7 +53,7 @@ export class HandEvaluator {
     };
   }
 
-  static evaluateOmaha(holeCards: Card[], communityCards: Card[], handRankOrder?: HandRank[]): HandEvaluation {
+  static evaluateOmaha(holeCards: Card[], communityCards: Card[], handRankOrder?: HandRank[], isShortDeck?: boolean): HandEvaluation {
     if (holeCards.length < 4 || communityCards.length < 3) {
       throw new Error('Omaha needs at least 4 hole cards and 3 community cards');
     }
@@ -76,7 +76,7 @@ export class HandEvaluator {
     for (const hc of holeCombos) {
       for (const cc of communityCombos) {
         const combo = [...hc, ...cc];
-        const { rank, value } = this.evaluateFiveCards(combo);
+        const { rank, value } = this.evaluateFiveCards(combo, isShortDeck);
         const cmp = this.compareRankValue(rank, value, bestRank, bestValue, rankOrder);
         if (cmp > 0) {
           bestRank = rank;
@@ -99,7 +99,7 @@ export class HandEvaluator {
     };
   }
 
-  static evaluateCrazyPineapple(holeCards: Card[], communityCards: Card[], handRankOrder?: HandRank[]): HandEvaluation {
+  static evaluateCrazyPineapple(holeCards: Card[], communityCards: Card[], handRankOrder?: HandRank[], isShortDeck?: boolean): HandEvaluation {
     if (holeCards.length < 3 || communityCards.length < 2) {
       throw new Error('Crazy Pineapple needs at least 3 hole cards and 2 community cards');
     }
@@ -118,7 +118,7 @@ export class HandEvaluator {
     let bestValue = 0;
 
     for (const combo of combinations) {
-      const { rank, value } = this.evaluateFiveCards(combo);
+      const { rank, value } = this.evaluateFiveCards(combo, isShortDeck);
       const cmp = this.compareRankValue(rank, value, bestRank, bestValue, rankOrder);
       if (cmp > 0) {
         bestRank = rank;
@@ -145,18 +145,25 @@ export class HandEvaluator {
     };
   }
 
-  private static evaluateFiveCards(cards: Card[]): { rank: HandRank; value: number } {
+  private static evaluateFiveCards(cards: Card[], isShortDeck?: boolean): { rank: HandRank; value: number } {
     const isFlush = this.isFlush(cards);
     const isStraight = this.isStraight(cards);
     const isWheelStraight = this.isWheelStraight(cards);
+    const isShortDeckWheel = isShortDeck ? this.isShortDeckWheelStraight(cards) : false;
     const counts = this.getCardCounts(cards);
     const sortedRanks = this.getSortedRanks(cards);
 
-    if (isFlush && (isStraight || isWheelStraight)) {
+    if (isFlush && (isStraight || isWheelStraight || isShortDeckWheel)) {
       if (isWheelStraight) {
         return {
           rank: HandRank.STRAIGHT_FLUSH,
           value: this.calculateValue([5, 4, 3, 2, 1]),
+        };
+      }
+      if (isShortDeckWheel) {
+        return {
+          rank: HandRank.STRAIGHT_FLUSH,
+          value: this.calculateValue([9, 8, 7, 6, 5]),
         };
       }
       const isRoyal = sortedRanks[0] === 14 && sortedRanks[4] === 10;
@@ -188,11 +195,17 @@ export class HandEvaluator {
       };
     }
 
-    if (isStraight || isWheelStraight) {
+    if (isStraight || isWheelStraight || isShortDeckWheel) {
       if (isWheelStraight) {
         return {
           rank: HandRank.STRAIGHT,
           value: this.calculateValue([5, 4, 3, 2, 1]),
+        };
+      }
+      if (isShortDeckWheel) {
+        return {
+          rank: HandRank.STRAIGHT,
+          value: this.calculateValue([9, 8, 7, 6, 5]),
         };
       }
       return {
@@ -261,6 +274,11 @@ export class HandEvaluator {
   private static isWheelStraight(cards: Card[]): boolean {
     const ranks = this.getSortedRanks(cards);
     return ranks[0] === 14 && ranks[1] === 5 && ranks[2] === 4 && ranks[3] === 3 && ranks[4] === 2;
+  }
+
+  private static isShortDeckWheelStraight(cards: Card[]): boolean {
+    const ranks = this.getSortedRanks(cards);
+    return ranks[0] === 14 && ranks[1] === 9 && ranks[2] === 8 && ranks[3] === 7 && ranks[4] === 6;
   }
 
   private static getCardCounts(cards: Card[]): number[] {
@@ -372,6 +390,9 @@ export class HandEvaluator {
         if (this.isWheelStraight(cards)) {
           return `${suitName}同花顺 5-4-3-2-A`;
         }
+        if (this.isShortDeckWheelStraight(cards)) {
+          return `${suitName}同花顺 9-8-7-6-A`;
+        }
         return `${suitName}同花顺 ${rankNames.join('-')}`;
       }
       case HandRank.FOUR_OF_A_KIND: {
@@ -393,6 +414,9 @@ export class HandEvaluator {
       case HandRank.STRAIGHT: {
         if (this.isWheelStraight(cards)) {
           return `顺子 5-4-3-2-A`;
+        }
+        if (this.isShortDeckWheelStraight(cards)) {
+          return `顺子 9-8-7-6-A`;
         }
         return `顺子 ${rankNames.join('-')}`;
       }
