@@ -407,6 +407,7 @@ export enum ClientEvents {
   AFK = 'room:afk',
   VOTE_EXTEND_HANDS = 'room:vote_extend_hands',
   VOTE_EXTEND_HANDS_RESPONSE = 'room:vote_extend_hands_response',
+  SHOW_CARDS = 'game:show_cards',
 }
 
 export enum ServerEvents {
@@ -442,4 +443,5 @@ export enum ServerEvents {
   VOTE_EXTEND_HANDS_STARTED = 'room:vote_extend_hands_started',
   VOTE_EXTEND_HANDS_RESPONSE = 'room:vote_extend_hands_response',
   VOTE_EXTEND_HANDS_ENDED = 'room:vote_extend_hands_ended',
+  SHOW_CARDS_RESULT = 'game:show_cards_result',
 }

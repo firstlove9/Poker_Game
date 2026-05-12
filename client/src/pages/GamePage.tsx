@@ -82,6 +82,13 @@ export default function GamePage() {
   } | null>(null)
   const [showVoteExtendModal, setShowVoteExtendModal] = useState(false)
 
+  const [showCardsInfo, setShowCardsInfo] = useState<{
+    playerId: string
+    playerName: string
+    holeCards: Card[]
+    communityCards: Card[]
+  } | null>(null)
+
   const [showRunItTwiceDialog, setShowRunItTwiceDialog] = useState(false)
   const [runItTwiceMyChoice, setRunItTwiceMyChoice] = useState<RunItTwiceChoice | null>(null)
   const [runItTwiceOtherChoice, setRunItTwiceOtherChoice] = useState<RunItTwiceChoice | null>(null)
@@ -406,6 +413,29 @@ export default function GamePage() {
       }
     }
 
+    const handleShowCardsResult = (data: any) => {
+      setShowCardsInfo({
+        playerId: data.playerId,
+        playerName: data.playerName,
+        holeCards: data.holeCards,
+        communityCards: data.communityCards || [],
+      })
+      if (data.holeCards && data.holeCards.length > 0) {
+        const cardsStr = data.holeCards.map((c: Card) => `${c.rank}${c.suit}`).join(' ')
+        setHandResults(prev => {
+          if (prev.length === 0) return prev
+          const lastResult = prev[prev.length - 1]
+          const updatedPlayers = lastResult.players.map((p: any) => {
+            if (p.playerId === data.playerId) {
+              return { ...p, holeCards: cardsStr, showedCards: true }
+            }
+            return p
+          })
+          return [...prev.slice(0, -1), { ...lastResult, players: updatedPlayers }]
+        })
+      }
+    }
+
     const handleRoomLeft = (data: any) => {
       if (data.reason === 'vote') {
         clearLogStorage()
@@ -661,6 +691,7 @@ export default function GamePage() {
     on(ServerEvents.RUN_IT_TWICE_ROUND_RESULT, handleRunItTwiceRoundResult)
     on(ServerEvents.GAME_OVER, handleGameOver)
     on(ServerEvents.AFK_STATUS_CHANGED, handleAfkStatusChanged)
+    on(ServerEvents.SHOW_CARDS_RESULT, handleShowCardsResult)
 
     fetchGameState()
 
@@ -693,6 +724,7 @@ export default function GamePage() {
       off(ServerEvents.RUN_IT_TWICE_ROUND_RESULT, handleRunItTwiceRoundResult)
       off(ServerEvents.GAME_OVER, handleGameOver)
       off(ServerEvents.AFK_STATUS_CHANGED, handleAfkStatusChanged)
+      off(ServerEvents.SHOW_CARDS_RESULT, handleShowCardsResult)
     }
   }, [roomId, myPlayerId])
 
@@ -1379,6 +1411,86 @@ export default function GamePage() {
             {voteExtendInfo.votes[myPlayerId || ''] === true && (
               <p className="text-center text-green-400 text-sm">你已同意加局，等待其他玩家投票...</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {showCardsInfo && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
+          <div className="bg-black/80 backdrop-blur-md rounded-xl px-6 py-4 md:px-8 md:py-6 border border-purple-500/40 shadow-2xl max-w-md w-full">
+            <div className="text-center mb-4">
+              <span className="text-purple-300 font-bold text-lg md:text-xl">🃏 秀牌</span>
+            </div>
+
+            <div className="text-center mb-3">
+              <span className="text-white/80 text-sm md:text-base">
+                <span className="text-yellow-400 font-bold">{showCardsInfo.playerName}</span> 的手牌
+              </span>
+            </div>
+
+            <div className="flex justify-center gap-2 md:gap-3 mb-4">
+              {showCardsInfo.holeCards.map((card, ci) => {
+                const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
+                const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                return (
+                  <div key={ci} className={`w-14 h-20 md:w-20 md:h-28 bg-white rounded-lg border-2 border-gray-300 flex flex-col items-center justify-center shadow-lg ${isRed ? 'text-red-600' : 'text-black'}`}>
+                    <span className="font-bold text-lg md:text-2xl">{card.rank}</span>
+                    <span className="text-xl md:text-3xl">{suitSymbol[card.suit]}</span>
+                  </div>
+                )
+              })}
+            </div>
+
+            {showCardsInfo.communityCards.length > 0 && (
+              <>
+                <div className="text-center mb-2">
+                  <span className="text-white/50 text-xs md:text-sm">公共牌</span>
+                </div>
+                <div className="flex items-center justify-center gap-1 mb-4">
+                  {showCardsInfo.communityCards.slice(0, 3).map((card, i) => {
+                    const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
+                    const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                    return (
+                      <div key={i} className={`w-10 h-14 md:w-12 md:h-16 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
+                        <span className="font-bold text-xs md:text-sm">{card.rank}</span>
+                        <span className="text-sm md:text-base">{suitSymbol[card.suit]}</span>
+                      </div>
+                    )
+                  })}
+                  {showCardsInfo.communityCards.length > 3 && <span className="text-white/30 mx-0.5 md:mx-1">|</span>}
+                  {showCardsInfo.communityCards.length > 3 && showCardsInfo.communityCards.slice(3, 4).map((card, i) => {
+                    const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
+                    const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                    return (
+                      <div key={i + 3} className={`w-10 h-14 md:w-12 md:h-16 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
+                        <span className="font-bold text-xs md:text-sm">{card.rank}</span>
+                        <span className="text-sm md:text-base">{suitSymbol[card.suit]}</span>
+                      </div>
+                    )
+                  })}
+                  {showCardsInfo.communityCards.length > 4 && <span className="text-white/30 mx-0.5 md:mx-1">|</span>}
+                  {showCardsInfo.communityCards.length > 4 && showCardsInfo.communityCards.slice(4, 5).map((card, i) => {
+                    const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
+                    const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                    return (
+                      <div key={i + 4} className={`w-10 h-14 md:w-12 md:h-16 bg-white rounded border border-gray-300 flex flex-col items-center justify-center ${isRed ? 'text-red-600' : 'text-black'}`}>
+                        <span className="font-bold text-xs md:text-sm">{card.rank}</span>
+                        <span className="text-sm md:text-base">{suitSymbol[card.suit]}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+
+            <div className="flex justify-center">
+              <button
+                onClick={() => setShowCardsInfo(null)}
+                className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-bold text-sm md:text-base"
+              >
+                关闭
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2239,6 +2351,30 @@ export default function GamePage() {
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-2 md:p-4">
             <div className="bg-gray-800 rounded-xl p-3 md:p-6 max-w-lg w-full mx-2 md:mx-4 border border-gray-600 max-h-[90vh] md:max-h-[85vh] flex flex-col">
               <h2 className="text-xl md:text-2xl font-bold text-white text-center mb-2 md:mb-3">🏆 本局结束</h2>
+
+              {(() => {
+                const winnerHand = allHands.find((h: any) => h.isWinner)
+                const isFoldWin = winnerHand?.handDescription === '其他玩家弃牌'
+                const iAmWinner = winnerHand?.playerId === myPlayerId
+                const alreadyShown = showCardsInfo?.playerId === winnerHand?.playerId
+                const canShowCards = isFoldWin && iAmWinner && !alreadyShown
+                return canShowCards ? (
+                  <div className="flex justify-center mb-2 md:mb-3">
+                    <button
+                      onClick={async () => {
+                        const result = await emit(ClientEvents.SHOW_CARDS)
+                        if (!result?.success) {
+                          addToast(result?.error || '秀牌失败', 'error')
+                        }
+                      }}
+                      disabled={isSubmitting}
+                      className={`px-4 md:px-6 py-1.5 md:py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold text-sm md:text-lg ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      🃏 秀牌
+                    </button>
+                  </div>
+                ) : null
+              })()}
 
               <div className="flex gap-2 md:gap-3 mb-3 md:mb-4">
                 {isGameOver ? (

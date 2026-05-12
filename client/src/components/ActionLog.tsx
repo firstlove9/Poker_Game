@@ -19,6 +19,7 @@ export interface HandResultPlayer {
   netWin?: number
   initialChips?: number
   position?: string
+  showedCards?: boolean
 }
 
 export interface RunItTwiceRoundInfo {
@@ -320,7 +321,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                                 <td className="py-1 px-1.5 w-5 text-center">{p.isWinner ? '🏆' : ''}</td>
                                 <td className="py-1 px-0.5 w-5 text-center text-[10px] text-yellow-400/70 font-bold">{p.position || ''}</td>
                                 <td className="py-1 px-1">
-                                  <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}</div>
+                                  <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}{p.showedCards && <span className="text-purple-300 ml-1 text-[9px]">🃏秀牌</span>}</div>
                                   {p.initialChips !== undefined && (
                                     <div className="text-white/40 text-[9px]">带入 ${p.initialChips}</div>
                                   )}
@@ -350,7 +351,7 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                             <td className="py-1 px-1.5 w-5 text-center">{p.isWinner ? '🏆' : ''}</td>
                             <td className="py-1 px-0.5 w-5 text-center text-[10px] text-yellow-400/70 font-bold">{p.position || ''}</td>
                             <td className="py-1 px-1">
-                              <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}</div>
+                              <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}{p.showedCards && <span className="text-purple-300 ml-1 text-[9px]">🃏秀牌</span>}</div>
                               {p.initialChips !== undefined && (
                                 <div className="text-white/40 text-[9px]">带入 ${p.initialChips}</div>
                               )}

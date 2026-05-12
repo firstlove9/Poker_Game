@@ -745,6 +745,70 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
       safeCallback(callback, { success: false, error: '发送消息失败' });
     }
   });
+
+  socket.on(ClientEvents.SHOW_CARDS, (callback?: (response: any) => void) => {
+    try {
+      const playerId = socket.data.playerId;
+      if (!playerId) {
+        safeCallback(callback, { success: false, error: '未登录' });
+        return;
+      }
+
+      const roomId = roomManager.getPlayerRoomId(playerId);
+      if (!roomId) {
+        safeCallback(callback, { success: false, error: '你不在任何房间中' });
+        return;
+      }
+
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        safeCallback(callback, { success: false, error: '房间不存在' });
+        return;
+      }
+
+      const lastResult = room.gameState?.lastShowdownResult;
+      if (!lastResult) {
+        safeCallback(callback, { success: false, error: '没有可秀牌的结果' });
+        return;
+      }
+
+      const winnerHand = lastResult.allHands.find((h: any) => h.isWinner);
+      if (!winnerHand) {
+        safeCallback(callback, { success: false, error: '没有获胜者' });
+        return;
+      }
+
+      if (winnerHand.playerId !== playerId) {
+        safeCallback(callback, { success: false, error: '只有获胜者可以秀牌' });
+        return;
+      }
+
+      const gameEngine = gameEngines.get(roomId);
+      if (!gameEngine) {
+        safeCallback(callback, { success: false, error: '游戏引擎未找到' });
+        return;
+      }
+
+      const holeCards = gameEngine.getPlayerCards(playerId);
+      if (!holeCards || holeCards.length === 0) {
+        safeCallback(callback, { success: false, error: '没有手牌可秀' });
+        return;
+      }
+
+      const winnerPlayer = room.players.find((p: any) => p.id === playerId);
+
+      io.to(roomId).emit(ServerEvents.SHOW_CARDS_RESULT, {
+        playerId,
+        playerName: winnerPlayer?.name || playerId,
+        holeCards,
+        communityCards: lastResult.communityCards || [],
+      });
+
+      safeCallback(callback, { success: true });
+    } catch (error) {
+      safeCallback(callback, { success: false, error: '秀牌失败' });
+    }
+  });
 }
 
 function syncPlayerChipsToRoom(gameEngine: GameEngine, room: any): void {
