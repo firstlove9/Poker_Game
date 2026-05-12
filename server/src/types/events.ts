@@ -60,4 +60,5 @@ export enum ServerEvents {
   VOTE_EXTEND_HANDS_RESPONSE = 'room:vote_extend_hands_response',
   VOTE_EXTEND_HANDS_ENDED = 'room:vote_extend_hands_ended',
   SHOW_CARDS_RESULT = 'game:show_cards_result',
+  ACTION_LOG_SYNC = 'game:action_log_sync',
 }

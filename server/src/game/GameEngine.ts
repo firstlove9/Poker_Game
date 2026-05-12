@@ -537,9 +537,24 @@ export class GameEngine {
 
     this.state.runItTwiceBoard = boards;
 
-    const totalPot = this.state.pots.reduce((sum, p) => sum + p.amount, 0);
-    const potPerRound = Math.floor(totalPot / rounds);
-    const remainder = totalPot - potPerRound * rounds;
+    const nonFoldedPlayerIds = activePlayers.map(p => p.id);
+    const contestedPots = this.state.pots.filter(p =>
+      nonFoldedPlayerIds.every(id => p.eligiblePlayers.includes(id))
+    );
+    const uncontestedPots = this.state.pots.filter(p =>
+      !nonFoldedPlayerIds.every(id => p.eligiblePlayers.includes(id))
+    );
+
+    for (const pot of uncontestedPots) {
+      const eligibleWinner = this.players.find(p => pot.eligiblePlayers.includes(p.id) && this.state.playerStatus[p.id] !== PlayerStatus.FOLDED);
+      if (eligibleWinner) {
+        eligibleWinner.chips += pot.amount;
+      }
+    }
+
+    const contestedPotTotal = contestedPots.reduce((sum, p) => sum + p.amount, 0);
+    const potPerRound = Math.floor(contestedPotTotal / rounds);
+    const remainder = contestedPotTotal - potPerRound * rounds;
 
     const roundResults: RunItTwiceRoundResult[] = [];
     const roundWinnings: Map<string, number> = new Map();
@@ -632,13 +647,14 @@ export class GameEngine {
     this.state.communityCards = boards[0];
     this.state.phase = GamePhase.SHOWDOWN;
 
-    return this.buildRunItTwiceShowdownResult(activePlayers, roundResults, roundWinnings);
+    return this.buildRunItTwiceShowdownResult(activePlayers, roundResults, roundWinnings, contestedPots);
   }
 
   private buildRunItTwiceShowdownResult(
     activePlayers: RoomPlayer[],
     roundResults: RunItTwiceRoundResult[],
-    roundWinnings: Map<string, number>
+    roundWinnings: Map<string, number>,
+    contestedPots: { id: string; amount: number; eligiblePlayers: string[] }[]
   ): { winners: WinnerInfo[]; potResults: PotResult[]; allHands: PlayerHandInfo[] } {
     const winners: WinnerInfo[] = [];
     const potResults: PotResult[] = [];
@@ -659,9 +675,9 @@ export class GameEngine {
 
     for (let round = 0; round < roundResults.length; round++) {
       const result = roundResults[round];
-      const totalPot = this.state.pots.reduce((sum, p) => sum + p.amount, 0);
-      const halfPot = Math.floor(totalPot / 2);
-      const remainder = totalPot - halfPot * 2;
+      const contestedPotTotal = contestedPots.reduce((sum, p) => sum + p.amount, 0);
+      const halfPot = Math.floor(contestedPotTotal / 2);
+      const remainder = contestedPotTotal - halfPot * 2;
       const potForRound = round === 0 ? halfPot + remainder : halfPot;
 
       for (const wid of result.winnerIds) {
@@ -1562,6 +1578,13 @@ export class GameEngine {
 
   getPlayers(): RoomPlayer[] {
     return this.players.map(p => ({ ...p }));
+  }
+
+  addPlayerChips(playerId: string, amount: number): boolean {
+    const player = this.players.find(p => p.id === playerId);
+    if (!player) return false;
+    player.chips += amount;
+    return true;
   }
 
   getCurrentPlayerId(): string | undefined {

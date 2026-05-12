@@ -4,7 +4,7 @@ import { GameEngine } from '../../game/GameEngine';
 import { ClientEvents, ServerEvents } from '../../types/events';
 import { PlayerAction, GamePhase, RunItTwiceChoice } from '../../types/poker';
 import { RoomStatus, PlayerRoomRole, RoomPlayer } from '../../types/room';
-import { addActionLog, loadRoomLogs } from '../../room/ActionLogManager';
+import { addActionLog, loadRoomLogs, addHandResult, getRoomHandResults } from '../../room/ActionLogManager';
 import { handlePlayerTurnWithAfk, tryStartGame } from './roomHandler';
 
 export const gameEngines: Map<string, GameEngine> = new Map();
@@ -109,6 +109,38 @@ function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: 
   }
 
   roomManager.syncScoreboard(roomId);
+
+  const handResultForLog = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    players: allHands.map((h: any) => ({
+      playerId: h.playerId,
+      playerName: h.playerName,
+      isWinner: h.isWinner,
+      winAmount: h.isWinner ? h.winAmount : undefined,
+      holeCards: '',
+      handRank: h.handRank || '',
+      netWin: h.netWin,
+      initialChips: h.initialChips,
+      position: h.position,
+    })),
+    communityCards: finalGameState.communityCards
+      ? finalGameState.communityCards.map((c: any) => `${c.rank}${c.suit}`).join(' ')
+      : '',
+    timestamp: Date.now(),
+    isRunItTwice: !!(finalGameState.runItTwiceBoard && finalGameState.runItTwiceBoard.length > 0),
+    runItTwiceRounds: finalGameState.runItTwiceBoard && finalGameState.runItTwiceBoard.length > 0
+      ? finalGameState.runItTwiceBoard.map((board: any[], roundIdx: number) => {
+          const roundResult = finalGameState.runItTwiceResults?.[roundIdx];
+          return {
+            communityCards: board.map((c: any) => `${c.rank}${c.suit}`).join(' '),
+            winnerIds: roundResult?.winnerIds || [],
+            winAmount: roundResult?.winAmount || 0,
+            handRanks: roundResult?.handRanks || {},
+          };
+        })
+      : undefined,
+  };
+  addHandResult(roomId, handResultForLog);
 
   const isRunItTwice = finalGameState.runItTwiceResults && finalGameState.runItTwiceResults.length > 0;
 

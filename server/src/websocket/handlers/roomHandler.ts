@@ -5,7 +5,7 @@ import { CreateRoomRequest, JoinRoomRequest, RoomStatus, PlayerRoomRole } from '
 import { Card, PlayerAction, PlayerStatus } from '../../types/poker';
 import { GameEngine, GameConfig } from '../../game/GameEngine';
 import { gameEngines } from './gameHandler';
-import { addActionLog, cleanupRoomLogs } from '../../room/ActionLogManager';
+import { addActionLog, cleanupRoomLogs, loadRoomLogs, getRoomLogs, getRoomHandResults } from '../../room/ActionLogManager';
 
 function safeCallback(callback: any, response: any): void {
   if (typeof callback === 'function') {
@@ -226,6 +226,16 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
           playerId,
         });
 
+        loadRoomLogs(data.roomId);
+        const existingLogs = getRoomLogs(data.roomId);
+        const existingHandResults = getRoomHandResults(data.roomId);
+        if (existingLogs.length > 0 || existingHandResults.length > 0) {
+          socket.emit(ServerEvents.ACTION_LOG_SYNC, {
+            actionLogs: existingLogs,
+            handResults: existingHandResults,
+          });
+        }
+
         socket.to(data.roomId).emit(ServerEvents.PLAYER_JOINED, {
           player: result.room.players.find(p => p.id === playerId),
           room: sanitizeRoom(result.room),
@@ -252,6 +262,16 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
               room: sanitizeRoom(room),
               playerId,
             });
+
+            loadRoomLogs(data.roomId);
+            const existingLogs = getRoomLogs(data.roomId);
+            const existingHandResults = getRoomHandResults(data.roomId);
+            if (existingLogs.length > 0 || existingHandResults.length > 0) {
+              socket.emit(ServerEvents.ACTION_LOG_SYNC, {
+                actionLogs: existingLogs,
+                handResults: existingHandResults,
+              });
+            }
 
             io.to(data.roomId).emit(ServerEvents.PLAYER_JOINED, {
               player: existingPlayer,
@@ -467,11 +487,9 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
           const room = roomManager.getRoom(roomId);
 
           const gameEngine = gameEngines.get(roomId);
-          if (gameEngine && room) {
-            const enginePlayers = gameEngine.getPlayers();
-            const ep = enginePlayers.find(p => p.id === playerId);
-            if (ep) {
-              ep.chips += (result.amount || 0);
+          if (gameEngine && room && room.status === RoomStatus.PLAYING) {
+            const updated = gameEngine.addPlayerChips(playerId, result.amount || 0);
+            if (updated) {
               syncPlayerChipsToRoom(gameEngine, room);
             }
           }

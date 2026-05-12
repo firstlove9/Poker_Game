@@ -436,6 +436,33 @@ export default function GamePage() {
       }
     }
 
+    const handleActionLogSync = (data: any) => {
+      if (data.actionLogs && data.actionLogs.length > 0) {
+        setActionLogs(prev => {
+          const existingIds = new Set(prev.map(l => l.id))
+          const newLogs = data.actionLogs.filter((l: any) => !existingIds.has(l.id))
+          if (newLogs.length === 0) return prev
+          const mapped = newLogs.map((l: any) => ({
+            id: l.id,
+            playerName: l.playerName,
+            action: l.action,
+            amount: l.amount,
+            phase: l.phase || '',
+            timestamp: l.timestamp,
+          }))
+          return [...prev, ...mapped].sort((a, b) => a.timestamp - b.timestamp)
+        })
+      }
+      if (data.handResults && data.handResults.length > 0) {
+        setHandResults(prev => {
+          const existingIds = new Set(prev.map(r => r.id))
+          const newResults = data.handResults.filter((r: any) => !existingIds.has(r.id))
+          if (newResults.length === 0) return prev
+          return [...prev, ...newResults].sort((a, b) => a.timestamp - b.timestamp)
+        })
+      }
+    }
+
     const handleRoomLeft = (data: any) => {
       if (data.reason === 'vote') {
         clearLogStorage()
@@ -692,6 +719,7 @@ export default function GamePage() {
     on(ServerEvents.GAME_OVER, handleGameOver)
     on(ServerEvents.AFK_STATUS_CHANGED, handleAfkStatusChanged)
     on(ServerEvents.SHOW_CARDS_RESULT, handleShowCardsResult)
+    on(ServerEvents.ACTION_LOG_SYNC, handleActionLogSync)
 
     fetchGameState()
 
@@ -725,6 +753,7 @@ export default function GamePage() {
       off(ServerEvents.GAME_OVER, handleGameOver)
       off(ServerEvents.AFK_STATUS_CHANGED, handleAfkStatusChanged)
       off(ServerEvents.SHOW_CARDS_RESULT, handleShowCardsResult)
+      off(ServerEvents.ACTION_LOG_SYNC, handleActionLogSync)
     }
   }, [roomId, myPlayerId])
 
