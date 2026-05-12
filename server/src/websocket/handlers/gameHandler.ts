@@ -804,14 +804,25 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
         return;
       }
 
-      const winnerHand = lastResult.allHands.find((h: any) => h.isWinner);
-      if (!winnerHand) {
-        safeCallback(callback, { success: false, error: '没有获胜者' });
+      const myHand = lastResult.allHands.find((h: any) => h.playerId === playerId);
+      if (!myHand) {
+        safeCallback(callback, { success: false, error: '你没有参与本局' });
         return;
       }
 
-      if (winnerHand.playerId !== playerId) {
-        safeCallback(callback, { success: false, error: '只有获胜者可以秀牌' });
+      if (myHand.isWinner && myHand.handDescription === '其他玩家弃牌') {
+        // fold win - allowed to show
+      } else {
+        const isFoldWin = lastResult.allHands.some((h: any) => h.isWinner && h.handDescription === '其他玩家弃牌');
+        if (!isFoldWin) {
+          safeCallback(callback, { success: false, error: '只有在其他人弃牌的情况下才能秀牌' });
+          return;
+        }
+      }
+
+      const alreadyShown = room.gameState?.showedCardsPlayers?.includes(playerId);
+      if (alreadyShown) {
+        safeCallback(callback, { success: false, error: '你已经秀过牌了' });
         return;
       }
 
@@ -827,11 +838,16 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
         return;
       }
 
-      const winnerPlayer = room.players.find((p: any) => p.id === playerId);
+      if (!room.gameState!.showedCardsPlayers) {
+        room.gameState!.showedCardsPlayers = [];
+      }
+      room.gameState!.showedCardsPlayers.push(playerId);
+
+      const player = room.players.find((p: any) => p.id === playerId);
 
       io.to(roomId).emit(ServerEvents.SHOW_CARDS_RESULT, {
         playerId,
-        playerName: winnerPlayer?.name || playerId,
+        playerName: player?.name || playerId,
         holeCards,
         communityCards: lastResult.communityCards || [],
       });

@@ -88,6 +88,7 @@ export default function GamePage() {
     holeCards: Card[]
     communityCards: Card[]
   } | null>(null)
+  const [showedCardsPlayerIds, setShowedCardsPlayerIds] = useState<Set<string>>(new Set())
 
   const [showRunItTwiceDialog, setShowRunItTwiceDialog] = useState(false)
   const [runItTwiceMyChoice, setRunItTwiceMyChoice] = useState<RunItTwiceChoice | null>(null)
@@ -225,6 +226,8 @@ export default function GamePage() {
       if (meInRoom?.isAfk !== undefined) setIsAfk(meInRoom.isAfk)
       setIsWaitingForStart(false)
       setActionLogs([])
+      setShowCardsInfo(null)
+      setShowedCardsPlayerIds(new Set())
       addLog('系统', 'deal', undefined, data.gameState?.phase || 'pre-flop')
     }
 
@@ -419,6 +422,11 @@ export default function GamePage() {
         playerName: data.playerName,
         holeCards: data.holeCards,
         communityCards: data.communityCards || [],
+      })
+      setShowedCardsPlayerIds(prev => {
+        const next = new Set(prev)
+        next.add(data.playerId)
+        return next
       })
       if (data.holeCards && data.holeCards.length > 0) {
         const cardsStr = data.holeCards.map((c: Card) => `${c.rank}${c.suit}`).join(' ')
@@ -2384,9 +2392,9 @@ export default function GamePage() {
               {(() => {
                 const winnerHand = allHands.find((h: any) => h.isWinner)
                 const isFoldWin = winnerHand?.handDescription === '其他玩家弃牌'
-                const iAmWinner = winnerHand?.playerId === myPlayerId
-                const alreadyShown = showCardsInfo?.playerId === winnerHand?.playerId
-                const canShowCards = isFoldWin && iAmWinner && !alreadyShown
+                const myHand = allHands.find((h: any) => h.playerId === myPlayerId)
+                const alreadyShown = showedCardsPlayerIds.has(myPlayerId || '')
+                const canShowCards = isFoldWin && !!myHand && !alreadyShown
                 return canShowCards ? (
                   <div className="flex justify-center mb-2 md:mb-3">
                     <button
