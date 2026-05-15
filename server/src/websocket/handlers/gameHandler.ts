@@ -890,6 +890,7 @@ function getAllHandsForShowdown(gameEngine: GameEngine, players: any[]): any[] {
 function sanitizeGameState(gameState: any): any {
   const sanitized = JSON.parse(JSON.stringify(gameState));
   sanitized.playerCards = {};
+  delete sanitized.deck;
   return sanitized;
 }
 

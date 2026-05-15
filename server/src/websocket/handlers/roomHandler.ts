@@ -1019,6 +1019,7 @@ function syncPlayerChipsToRoom(gameEngine: GameEngine, room: any): void {
 function sanitizeGameState(gameState: any): any {
   const sanitized = JSON.parse(JSON.stringify(gameState));
   sanitized.playerCards = {};
+  delete sanitized.deck;
   return sanitized;
 }
 

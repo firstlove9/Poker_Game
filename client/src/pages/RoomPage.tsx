@@ -283,7 +283,7 @@ export default function RoomPage() {
   const isSpectator = myRoomPlayer?.playerRoomRole === 'spectator'
 
   return (
-    <div className="h-[100dvh] flex flex-col overflow-hidden p-2 md:p-4">
+    <div className="min-h-[100dvh] flex flex-col p-2 md:p-4">
       {isReconnecting && (
         <div className="bg-red-600 text-white text-center py-1 text-sm font-bold animate-pulse mb-2 rounded-lg">
           ⚠ 连接断开，正在尝试重新连接...
@@ -427,10 +427,10 @@ export default function RoomPage() {
       </div>
 
       {/* 玩家座位 */}
-      <div className="max-w-4xl mx-auto flex-1 min-h-0 flex items-center justify-center">
-        <div className="relative w-full h-full max-h-[60vh]">
+      <div className="max-w-4xl mx-auto mb-2 md:mb-4">
+        <div className="relative">
           {/* 扑克桌 */}
-          <div className="poker-table rounded-full aspect-[4/3] w-full max-w-xl mx-auto flex items-center justify-center">
+          <div className="poker-table rounded-full aspect-[4/3] w-full max-w-2xl mx-auto flex items-center justify-center">
             <div className="text-white/20 text-center">
               <p className="text-lg md:text-2xl font-bold mb-1">等待玩家</p>
               <p className="text-xs md:text-sm">{readyPlayers}/{currentRoom.players.length} 已准备</p>

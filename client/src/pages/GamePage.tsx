@@ -840,12 +840,6 @@ export default function GamePage() {
             if (data.room.gameState.currentPlayerId) {
               setIsMyTurn(data.room.gameState.currentPlayerId === myPlayerId)
             }
-            if (data.room.gameState.playerCards && myPlayerId) {
-              const myCards = data.room.gameState.playerCards[myPlayerId]
-              if (myCards) {
-                setMyCards(myCards)
-              }
-            }
             const lastResult = data.room.gameState.lastShowdownResult
             if (lastResult && lastResult.winners && lastResult.allHands) {
               setWinners(lastResult.winners)

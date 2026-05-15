@@ -99,6 +99,7 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
               gameState: {
                 ...room.gameState,
                 playerCards: {},
+                deck: undefined,
               },
             });
 
