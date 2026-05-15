@@ -114,8 +114,8 @@ export default function LobbyPage() {
   const validRooms = rooms.filter(room => room && room.config)
 
   return (
-    <div className="min-h-[100dvh] p-4 md:p-8">
-      <div className="max-w-6xl mx-auto mb-8">
+    <div className="min-h-[100dvh] p-4 md:p-6 lg:p-8">
+      <div className="w-full max-w-[1600px] mx-auto mb-6 md:mb-8">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold text-white mb-1">
@@ -143,7 +143,7 @@ export default function LobbyPage() {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto mb-8">
+      <div className="w-full max-w-[1600px] mx-auto mb-6 md:mb-8">
         <div className="glass-panel p-4 flex gap-3">
           <input
             type="text"
@@ -164,7 +164,7 @@ export default function LobbyPage() {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto">
+      <div className="w-full max-w-[1600px] mx-auto">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-bold text-white">房间列表</h2>
           <button
@@ -183,7 +183,7 @@ export default function LobbyPage() {
             <p className="text-white/40 text-sm mt-2">点击"创建房间"开始游戏</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {validRooms.map((room, index) => (
               <motion.div
                 key={room.config.roomId}

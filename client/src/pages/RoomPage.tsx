@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Users, Play, Check, X, Coins, HelpCircle } from 'lucide-react'
+import { ArrowLeft, Users, Play, Check, X, Coins, HelpCircle, Crown } from 'lucide-react'
 import { useSocketStore, saveRoomId, clearSavedRoom } from '../stores/socketStore'
 import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
 import { ClientEvents, ServerEvents, GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO } from '../types'
-import PlayerSeat from '../components/PlayerSeat'
 
 interface VoteInfo {
   initiatorId: string
@@ -283,14 +282,14 @@ export default function RoomPage() {
   const isSpectator = myRoomPlayer?.playerRoomRole === 'spectator'
 
   return (
-    <div className="min-h-[100dvh] flex flex-col p-2 md:p-4">
+    <div className="h-[100dvh] flex flex-col overflow-hidden p-2 md:p-4">
       {isReconnecting && (
-        <div className="bg-red-600 text-white text-center py-1 text-sm font-bold animate-pulse mb-2 rounded-lg">
+        <div className="bg-red-600 text-white text-center py-1 text-sm font-bold animate-pulse mb-1 rounded-lg shrink-0">
           ⚠ 连接断开，正在尝试重新连接...
         </div>
       )}
       {!isConnected && !isReconnecting && (
-        <div className="bg-red-800 text-white text-center py-2 text-sm font-bold mb-2 rounded-lg">
+        <div className="bg-red-800 text-white text-center py-1 text-sm font-bold mb-1 rounded-lg shrink-0">
           ❌ 连接已断开，请刷新页面重新进入房间
         </div>
       )}
@@ -354,7 +353,7 @@ export default function RoomPage() {
       )}
 
       {/* 头部 */}
-      <div className="max-w-6xl mx-auto mb-2 md:mb-4 shrink-0">
+      <div className="mb-1 md:mb-2 shrink-0">
         <div className="flex justify-between items-center">
           <button
             onClick={handleLeaveRoom}
@@ -394,8 +393,8 @@ export default function RoomPage() {
       </div>
 
       {/* 房间信息 */}
-      <div className="max-w-6xl mx-auto mb-2 md:mb-4 shrink-0">
-        <div className="glass-panel p-2 md:p-4">
+      <div className="mb-1 md:mb-2 shrink-0">
+        <div className="glass-panel p-1.5 md:p-3">
           <div className="flex flex-wrap justify-center gap-3 md:gap-6 text-xs md:text-sm">
             <div className="text-white/60 flex items-center gap-1">
               <span className="text-lg">{VARIANT_RULES[currentRoom.config.gameVariant || GameVariant.TEXAS_NLHE].icon}</span>
@@ -426,49 +425,100 @@ export default function RoomPage() {
         </div>
       </div>
 
-      {/* 玩家座位 */}
-      <div className="max-w-4xl mx-auto mb-2 md:mb-4">
-        <div className="relative">
-          {/* 扑克桌 */}
-          <div className="poker-table rounded-full aspect-[4/3] w-full max-w-2xl mx-auto flex items-center justify-center">
-            <div className="text-white/20 text-center">
-              <p className="text-lg md:text-2xl font-bold mb-1">等待玩家</p>
-              <p className="text-xs md:text-sm">{readyPlayers}/{currentRoom.players.length} 已准备</p>
-            </div>
-          </div>
+      {/* 玩家列表 */}
+      <div className="flex-1 min-h-0 overflow-y-auto py-1 md:py-2">
+        <div className="glass-panel overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-white/10">
+                <th className="text-white/50 text-xs md:text-sm font-medium px-3 md:px-4 py-2 text-left">玩家</th>
+                <th className="text-white/50 text-xs md:text-sm font-medium px-3 md:px-4 py-2 text-center">状态</th>
+                <th className="text-white/50 text-xs md:text-sm font-medium px-3 md:px-4 py-2 text-right">筹码</th>
+              </tr>
+            </thead>
+            <tbody>
+              {currentRoom.players.map((player) => {
+                const isPlayerHost = player.id === currentRoom.config.hostId
+                const isPlayerMe = player.id === myPid
+                const playerIsReady = player.isReady
+                const playerIsSpectator = player.playerRoomRole === 'spectator'
+                const playerIsBusted = player.playerRoomRole === 'busted'
+                const playerIsAfk = player.isAfk
+                const playerIsOnline = player.isOnline
 
-          {/* 玩家座位 */}
-          {(() => {
-            const myIndex = currentRoom.players.findIndex(p => p.id === currentPlayer?.id)
-            const reordered = myIndex < 0 ? currentRoom.players : [
-              currentRoom.players[myIndex],
-              ...currentRoom.players.slice(myIndex + 1),
-              ...currentRoom.players.slice(0, myIndex),
-            ]
-            return reordered.map((player, index) => (
-              <PlayerSeat
-                key={player.id}
-                player={player}
-                index={index}
-                totalPlayers={Math.max(currentRoom.players.length, 6)}
-                isHost={player.id === currentRoom.config.hostId}
-                isMe={player.id === currentPlayer?.id}
-              />
-            ))
-          })()}
+                return (
+                  <tr
+                    key={player.id}
+                    className={`border-b border-white/5 last:border-b-0 transition-colors ${
+                      isPlayerMe ? 'bg-green-600/20' : 'hover:bg-white/5'
+                    } ${playerIsSpectator ? 'opacity-50' : ''}`}
+                  >
+                    <td className="px-3 md:px-4 py-2 md:py-3">
+                      <div className="flex items-center gap-2 md:gap-3">
+                        <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center text-white font-bold text-sm md:text-base shrink-0 ${
+                          isPlayerMe ? 'bg-green-600' : 'bg-gray-600'
+                        } ${playerIsReady && !playerIsSpectator ? 'ring-2 ring-green-500' : ''}`}>
+                          {player.name[0]}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1">
+                            <span className="text-white font-medium text-sm md:text-base truncate">
+                              {player.name}
+                            </span>
+                            {isPlayerMe && (
+                              <span className="text-gold text-xs font-bold">(我)</span>
+                            )}
+                            {isPlayerHost && (
+                              <Crown className="w-3.5 h-3.5 md:w-4 md:h-4 text-yellow-500 shrink-0" />
+                            )}
+                          </div>
+                          {!playerIsOnline && (
+                            <span className="text-orange-400 text-xs">断线</span>
+                          )}
+                          {playerIsAfk && playerIsOnline && (
+                            <span className="text-orange-400 text-xs">AFK</span>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 md:px-4 py-2 md:py-3 text-center">
+                      {playerIsSpectator ? (
+                        <span className="text-gray-400 text-xs md:text-sm px-2 py-0.5 rounded-full bg-gray-500/20">观战</span>
+                      ) : playerIsBusted ? (
+                        <span className="text-red-400 text-xs md:text-sm px-2 py-0.5 rounded-full bg-red-500/20">破产</span>
+                      ) : playerIsReady ? (
+                        <span className="text-green-400 text-xs md:text-sm px-2 py-0.5 rounded-full bg-green-500/20 flex items-center gap-1">
+                          <Check className="w-3 h-3" />已准备
+                        </span>
+                      ) : isPlaying ? (
+                        <span className="text-yellow-400 text-xs md:text-sm px-2 py-0.5 rounded-full bg-yellow-500/20">游戏中</span>
+                      ) : (
+                        <span className="text-white/40 text-xs md:text-sm px-2 py-0.5 rounded-full bg-white/10">等待</span>
+                      )}
+                    </td>
+                    <td className="px-3 md:px-4 py-2 md:py-3 text-right">
+                      <span className="text-yellow-300 font-bold text-sm md:text-base">
+                        ${player.chips.toLocaleString()}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
 
       {/* 底部操作栏 */}
-      <div className="max-w-4xl mx-auto shrink-0">
-        <div className="glass-panel p-2 md:p-4">
-          <div className="flex flex-wrap justify-center gap-2 md:gap-4">
+      <div className="shrink-0 mt-1 md:mt-2">
+        <div className="glass-panel p-2 md:p-3">
+          <div className="flex flex-wrap justify-center items-center gap-2 md:gap-4">
             {isSpectator ? (
-              <div className="text-yellow-400 text-lg font-bold">
+              <div className="text-yellow-400 text-sm md:text-lg font-bold">
                 👁️ 观战模式 — 牌局结束后可参与下一局
               </div>
             ) : isPlaying ? (
-              <div className="text-gold text-lg font-bold animate-pulse">
+              <div className="text-gold text-sm md:text-lg font-bold animate-pulse">
                 🎴 游戏进行中，请等待本局结束...
               </div>
             ) : (
@@ -480,7 +530,7 @@ export default function RoomPage() {
 
                 <button
                   onClick={handleToggleReady}
-                  className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+                  className={`px-4 md:px-6 py-2 rounded-lg font-medium transition-colors ${
                     isReady
                       ? 'bg-red-600 hover:bg-red-700 text-white'
                       : 'bg-green-600 hover:bg-green-700 text-white'
@@ -501,7 +551,7 @@ export default function RoomPage() {
                 )}
 
                 {!isHost && readyPlayers < currentRoom.players.length && (
-                  <div className="text-white/60 text-sm">
+                  <div className="text-white/60 text-xs md:text-sm">
                     等待房主开始游戏 ({readyPlayers}/{currentRoom.players.length} 已准备)
                   </div>
                 )}
