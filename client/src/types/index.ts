@@ -410,6 +410,7 @@ export enum ClientEvents {
   VOTE_EXTEND_HANDS_RESPONSE = 'room:vote_extend_hands_response',
   SHOW_CARDS = 'game:show_cards',
   DISCARD_CARD = 'game:discard_card',
+  REQUEST_MY_CARDS = 'game:request_my_cards',
 }
 
 export enum ServerEvents {

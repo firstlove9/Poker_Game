@@ -30,8 +30,12 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
     p.playerRoomRole === PlayerRoomRole.ACTIVE || p.playerRoomRole === PlayerRoomRole.BUSTED
   );
   if (hasPlayedBefore) {
+    const hasBustedPending = room.players.some(p =>
+      p.playerRoomRole === PlayerRoomRole.BUSTED && p.isOnline && !p.isAfk
+    );
+
     const REBUY_WAIT_MS = 15000;
-    if (room.handFinishTime && (Date.now() - room.handFinishTime) < REBUY_WAIT_MS) {
+    if (hasBustedPending && room.handFinishTime && (Date.now() - room.handFinishTime) < REBUY_WAIT_MS) {
       return false;
     }
     const DISCONNECT_TIMEOUT_MS = 120000;
@@ -45,9 +49,6 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
     const allReady = playersNeedReady.every(p => p.isReady);
     if (!allReady) return false;
 
-    const hasBustedPending = room.players.some(p =>
-      p.playerRoomRole === PlayerRoomRole.BUSTED && p.isOnline && !p.isAfk
-    );
     if (hasBustedPending) return false;
   }
 
@@ -488,11 +489,20 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
         const roomId = roomManager.getPlayerRoomId(playerId);
         if (roomId) {
           const room = roomManager.getRoom(roomId);
+          if (!room) {
+            safeCallback(callback, { success: false, error: '房间不存在' });
+            return;
+          }
 
           const gameEngine = gameEngines.get(roomId);
-          if (gameEngine && room && room.status === RoomStatus.PLAYING) {
+          if (gameEngine && room.status === RoomStatus.PLAYING) {
             gameEngine.recordRebuy(playerId, result.amount || 0);
             syncPlayerChipsToRoom(gameEngine, room);
+          }
+
+          const player = room.players.find(p => p.id === playerId);
+          if (player && !player.isReady && room.status !== RoomStatus.PLAYING) {
+            player.isReady = true;
           }
 
           roomManager.syncScoreboard(roomId);
@@ -502,6 +512,16 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
             amount: result.amount,
             room: sanitizeRoom(room),
           });
+
+          if (player && player.isReady) {
+            io.to(roomId).emit(ServerEvents.PLAYER_READY_CHANGED, {
+              playerId,
+              ready: true,
+              room: sanitizeRoom(room),
+            });
+
+            tryStartGame(roomId, roomManager, io);
+          }
         }
         safeCallback(callback, { success: true, amount: result.amount });
       } else {

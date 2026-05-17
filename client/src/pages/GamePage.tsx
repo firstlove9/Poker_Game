@@ -275,6 +275,7 @@ export default function GamePage() {
         const player = data.room.players?.find((p: any) => p.id === myPlayerId)
         if (player) {
           setCurrentPlayer(player)
+          setIsReady(player.isReady || false)
         }
       }
     }
@@ -285,6 +286,7 @@ export default function GamePage() {
         const player = data.room.players.find((p: any) => p.id === myPlayerId)
         if (player) {
           setCurrentPlayer(player)
+          setIsReady(player.isReady || false)
         }
       }
       if (data.playerId && data.amount) {
@@ -301,6 +303,10 @@ export default function GamePage() {
       setIsGameOver(true)
       if (data.room) {
         setCurrentRoom(data.room)
+        const me = data.room.players?.find((p: any) => p.id === myPlayerId)
+        if (me) {
+          setIsReady(me.isReady || false)
+        }
       }
     }
 
@@ -649,6 +655,7 @@ export default function GamePage() {
         const player = data.room.players?.find((p: any) => p.id === myPlayerId)
         if (player) {
           setCurrentPlayer(player)
+          setIsReady(player.isReady || false)
         }
       }
       setShowRunItTwiceDialog(false)
@@ -741,6 +748,14 @@ export default function GamePage() {
 
     fetchGameState()
 
+    if (myPlayerId) {
+      emit(ClientEvents.REQUEST_MY_CARDS).then((res: any) => {
+        if (res?.success && res.cards && res.cards.length > 0) {
+          setMyCards(res.cards as any)
+        }
+      }).catch(() => {})
+    }
+
     return () => {
       off(ServerEvents.GAME_STARTED, handleGameStarted)
       off(ServerEvents.DEAL_CARDS, handleDealCards)
@@ -819,7 +834,10 @@ export default function GamePage() {
 
   const fetchGameState = async (retryCount = 0) => {
     try {
-      const response = await fetch(`/api/rooms/${roomId}`)
+      const url = myPlayerId
+        ? `/api/rooms/${roomId}?playerId=${encodeURIComponent(myPlayerId)}`
+        : `/api/rooms/${roomId}`
+      const response = await fetch(url)
       if (!response.ok) {
         addToast('房间不存在或已关闭', 'error')
         clearLogStorage()
@@ -849,6 +867,9 @@ export default function GamePage() {
             setGameState(data.room.gameState)
             if (data.room.gameState.currentPlayerId) {
               setIsMyTurn(data.room.gameState.currentPlayerId === myPlayerId)
+            }
+            if (data.room.myCards && data.room.myCards.length > 0) {
+              setMyCards(data.room.myCards as any)
             }
             const lastResult = data.room.gameState.lastShowdownResult
             if (lastResult && lastResult.winners && lastResult.allHands) {
@@ -932,10 +953,6 @@ export default function GamePage() {
       const result = await emit(ClientEvents.GET_CHIPS)
       if (result?.success) {
         addToast(`补充筹码 $${result.amount}`, 'success')
-        const readyResult = await emit(ClientEvents.PLAYER_READY, true)
-        if (readyResult?.success) {
-          setIsReady(true)
-        }
       } else {
         addToast(result?.error || '补筹码失败', 'error')
       }
@@ -957,13 +974,6 @@ export default function GamePage() {
     try {
       const result = await emit(ClientEvents.GET_CHIPS)
       if (result?.success) {
-        const readyResult = await emit(ClientEvents.PLAYER_READY, true)
-        if (readyResult?.success) {
-          setIsReady(true)
-        } else {
-          setIsReady(false)
-          addToast(readyResult?.error || '准备失败，请手动准备', 'info')
-        }
         setShowResult(false)
         setIsWaitingForStart(true)
       } else {
@@ -1025,7 +1035,6 @@ export default function GamePage() {
       const result = await emit(ClientEvents.PLAYER_READY, true)
       if (result?.success) {
         if (gameStartedDuringReadyRef.current) {
-          setIsReady(false)
           setIsWaitingForStart(false)
         } else {
           setIsReady(true)
@@ -2538,6 +2547,8 @@ export default function GamePage() {
                       📋 牌局记录
                     </button>
                   </>
+                ) : isReady ? (
+                  <span className="text-green-400 text-sm md:text-lg self-center">✅ 已准备，等待中...</span>
                 ) : (
                   <button
                     onClick={handleReady}

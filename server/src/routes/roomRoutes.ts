@@ -38,11 +38,17 @@ export function createRoomRoutes(roomManager: RoomManager): Router {
   // 获取房间详情
   router.get('/rooms/:roomId', (req: Request, res: Response) => {
     const { roomId } = req.params;
+    const playerId = req.query.playerId as string | undefined;
     const room = roomManager.getRoom(roomId);
     
     if (!room) {
       res.status(404).json({ success: false, error: '房间不存在' });
       return;
+    }
+
+    let myCards: any = undefined;
+    if (playerId && room.gameState && room.gameState.playerCards) {
+      myCards = room.gameState.playerCards[playerId] || undefined;
     }
 
     res.json({ 
@@ -92,6 +98,7 @@ export function createRoomRoutes(roomManager: RoomManager): Router {
           lastShowdownResult: room.gameState.lastShowdownResult,
           showedCardsPlayers: room.gameState.showedCardsPlayers,
         } : undefined,
+        myCards,
       }
     });
   });

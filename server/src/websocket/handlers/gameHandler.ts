@@ -933,6 +933,48 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
       safeCallback(callback, { success: false, error: '弃牌失败' });
     }
   });
+
+  socket.on(ClientEvents.REQUEST_MY_CARDS, (callback?: (response: any) => void) => {
+    try {
+      const playerId = socket.data.playerId;
+      if (!playerId) {
+        safeCallback(callback, { success: false, error: '未登录' });
+        return;
+      }
+
+      const roomId = roomManager.getPlayerRoomId(playerId);
+      if (!roomId) {
+        safeCallback(callback, { success: false, error: '你不在任何房间中' });
+        return;
+      }
+
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        safeCallback(callback, { success: false, error: '房间不存在' });
+        return;
+      }
+
+      const gameEngine = gameEngines.get(roomId);
+      if (!gameEngine) {
+        safeCallback(callback, { success: false, error: '游戏引擎未找到' });
+        return;
+      }
+
+      const cards = gameEngine.getPlayerCards(playerId);
+      if (cards) {
+        safeCallback(callback, {
+          success: true,
+          handId: room.gameState?.handId,
+          playerId,
+          cards,
+        });
+      } else {
+        safeCallback(callback, { success: false, error: '没有手牌' });
+      }
+    } catch (error) {
+      safeCallback(callback, { success: false, error: '获取手牌失败' });
+    }
+  });
 }
 
 function syncPlayerChipsToRoom(gameEngine: GameEngine, room: any): void {
