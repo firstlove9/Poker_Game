@@ -206,6 +206,7 @@ export interface PlayerHandInfo {
   netWin?: number;
   roundHandRanks?: string[];
   initialChips?: number;
+  rebuyAmount?: number;
   position?: string;
 }
 

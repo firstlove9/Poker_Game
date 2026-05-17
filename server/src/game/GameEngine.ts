@@ -47,6 +47,7 @@ export class GameEngine {
   private lastAggressorIndex: number = -1;
   private actionCount: number = 0;
   private playerInitialChips: Map<string, number> = new Map();
+  private playerRebuyAmounts: Map<string, number> = new Map();
 
   constructor(players: RoomPlayer[], dealerIndex: number, config: GameConfig) {
     this.players = players.filter(p => p.isReady && p.chips > 0);
@@ -743,6 +744,7 @@ export class GameEngine {
         netWin,
         roundHandRanks,
         initialChips,
+        rebuyAmount: this.getRebuyAmount(player.id),
         position: this.getPlayerPosition(player.id),
       });
     }
@@ -761,6 +763,7 @@ export class GameEngine {
         isWinner: false,
         netWin: fp.chips - initialChips,
         initialChips,
+        rebuyAmount: this.getRebuyAmount(fp.id),
         position: this.getPlayerPosition(fp.id),
       });
     }
@@ -1195,6 +1198,7 @@ export class GameEngine {
         winAmount: netWin,
         netWin,
         initialChips,
+        rebuyAmount: this.getRebuyAmount(winner.id),
         position: this.getPlayerPosition(winner.id),
       });
 
@@ -1212,6 +1216,7 @@ export class GameEngine {
           isWinner: false,
           netWin: fp.chips - initialChips,
           initialChips,
+          rebuyAmount: this.getRebuyAmount(fp.id),
           position: this.getPlayerPosition(fp.id),
         });
       }
@@ -1365,6 +1370,7 @@ export class GameEngine {
         potType,
         netWin,
         initialChips,
+        rebuyAmount: this.getRebuyAmount(player.id),
         position: this.getPlayerPosition(player.id),
       });
     }
@@ -1383,6 +1389,7 @@ export class GameEngine {
         isWinner: false,
         netWin: fp.chips - initialChips,
         initialChips,
+        rebuyAmount: this.getRebuyAmount(fp.id),
         position: this.getPlayerPosition(fp.id),
       });
     }
@@ -1524,6 +1531,7 @@ export class GameEngine {
         winAmount: isWinner ? netWin : undefined,
         netWin,
         initialChips,
+        rebuyAmount: this.getRebuyAmount(player.id),
         position: this.getPlayerPosition(player.id),
       });
     }
@@ -1542,6 +1550,7 @@ export class GameEngine {
         isWinner: false,
         netWin: fp.chips - initialChips,
         initialChips,
+        rebuyAmount: this.getRebuyAmount(fp.id),
         position: this.getPlayerPosition(fp.id),
       });
     }
@@ -1585,6 +1594,15 @@ export class GameEngine {
     if (!player) return false;
     player.chips += amount;
     return true;
+  }
+
+  recordRebuy(playerId: string, amount: number): void {
+    const current = this.playerRebuyAmounts.get(playerId) || 0;
+    this.playerRebuyAmounts.set(playerId, current + amount);
+  }
+
+  getRebuyAmount(playerId: string): number {
+    return this.playerRebuyAmounts.get(playerId) || 0;
   }
 
   getCurrentPlayerId(): string | undefined {

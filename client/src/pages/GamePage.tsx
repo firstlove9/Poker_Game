@@ -54,6 +54,7 @@ export default function GamePage() {
   const [isWaitingForStart, setIsWaitingForStart] = useState(false)
   const [rebuyCountdown, setRebuyCountdown] = useState(0)
   const rebuyCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [myHandStartChips, setMyHandStartChips] = useState<number | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const gameStartedDuringReadyRef = useRef(false)
   const [gameOverInfo, setGameOverInfo] = useState<{ winner: { id: string; name: string; chips: number } | null } | null>(null)
@@ -225,6 +226,7 @@ export default function GamePage() {
       setIsReady(meInRoom?.isReady || false)
       if (meInRoom?.isAfk !== undefined) setIsAfk(meInRoom.isAfk)
       setIsWaitingForStart(false)
+      setMyHandStartChips(meInRoom?.chips ?? null)
       setActionLogs([])
       setShowCardsInfo(null)
       setShowedCardsPlayerIds(new Set())
@@ -280,7 +282,7 @@ export default function GamePage() {
       }
       if (data.playerId && data.amount) {
         const playerName = currentRoom?.players?.find((p: any) => p.id === data.playerId)?.name || '玩家'
-        addLog(playerName, `补充筹码 ${data.amount}`, data.amount)
+        addLog(playerName, 'rebuy', data.amount)
         if (data.playerId !== myPlayerId) {
           addToast(`${playerName} 补充筹码 $${data.amount}`, 'info')
         }
@@ -665,6 +667,7 @@ export default function GamePage() {
             handRank: h.handRank || '',
             netWin: h.netWin,
             initialChips: h.initialChips,
+            rebuyAmount: h.rebuyAmount,
             position: h.position,
           }
         })
@@ -911,6 +914,24 @@ export default function GamePage() {
       } catch (error: any) {
         addToast(error.message || '离开失败', 'error')
       }
+    }
+  }
+
+  const handleLowChipRebuy = async () => {
+    if (isSubmitting) return
+    if (maxRebuyReached) return
+    setIsSubmitting(true)
+    try {
+      const result = await emit(ClientEvents.GET_CHIPS)
+      if (result?.success) {
+        addToast(`补充筹码 $${result.amount}`, 'success')
+      } else {
+        addToast(result?.error || '补筹码失败', 'error')
+      }
+    } catch (error: any) {
+      addToast(error.message || '补筹码失败', 'error')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -1760,6 +1781,15 @@ export default function GamePage() {
                               <div className="text-orange-400 text-[8px] md:text-[10px] font-bold">☕AFK</div>
                             ) : (
                               <div className="text-yellow-300 text-[9px] md:text-[11px] font-bold">${player.chips}</div>
+                            )}
+                            {isMe && !isBustedPlayer && !isSpectatorPlayer && player.isOnline && !isAfkPlayer && currentRoom?.config?.buyInMin && myHandStartChips !== null && myHandStartChips < currentRoom.config.buyInMin * 0.2 && player.chips < currentRoom.config.buyInMin * 0.2 && !maxRebuyReached && gameState.phase !== 'waiting' && (
+                              <button
+                                onClick={handleLowChipRebuy}
+                                disabled={isSubmitting}
+                                className={`text-[7px] md:text-[9px] font-bold px-1 md:px-1.5 py-0.5 rounded bg-green-600 hover:bg-green-700 text-white mt-0.5 ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              >
+                                +补码
+                              </button>
                             )}
                             {isInGame && totalBet > 0 && (
                               <div className="text-yellow-200 text-[8px] md:text-[10px] font-bold bg-yellow-600/30 px-1 rounded">

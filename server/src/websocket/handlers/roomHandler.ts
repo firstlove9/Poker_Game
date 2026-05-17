@@ -488,10 +488,8 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
 
           const gameEngine = gameEngines.get(roomId);
           if (gameEngine && room && room.status === RoomStatus.PLAYING) {
-            const updated = gameEngine.addPlayerChips(playerId, result.amount || 0);
-            if (updated) {
-              syncPlayerChipsToRoom(gameEngine, room);
-            }
+            gameEngine.recordRebuy(playerId, result.amount || 0);
+            syncPlayerChipsToRoom(gameEngine, room);
           }
 
           roomManager.syncScoreboard(roomId);

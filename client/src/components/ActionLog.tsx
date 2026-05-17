@@ -18,6 +18,7 @@ export interface HandResultPlayer {
   handRank: string
   netWin?: number
   initialChips?: number
+  rebuyAmount?: number
   position?: string
   showedCards?: boolean
 }
@@ -59,6 +60,7 @@ const EMOJIS: Record<string, string> = {
   river: '🃏',
   showdown: '🏆',
   win: '🎉',
+  rebuy: '🔄',
 }
 
 const ACTION_NAMES: Record<string, string> = {
@@ -77,6 +79,7 @@ const ACTION_NAMES: Record<string, string> = {
   river: '河牌',
   showdown: '摊牌',
   win: '获胜',
+  rebuy: '补码',
 }
 
 const PHASE_NAMES: Record<string, string> = {
@@ -325,6 +328,9 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                                   {p.initialChips !== undefined && (
                                     <div className="text-white/40 text-[9px]">带入 ${p.initialChips}</div>
                                   )}
+                                  {p.rebuyAmount !== undefined && p.rebuyAmount > 0 && (
+                                    <div className="text-orange-400/70 text-[9px]">补码 ${p.rebuyAmount}</div>
+                                  )}
                                 </td>
                                 <td className="py-1 px-1 text-right">
                                   <div className="flex flex-col items-end gap-0.5">
@@ -354,6 +360,9 @@ export default function ActionLog({ logs, handResults }: ActionLogProps) {
                               <div className={`font-medium ${p.isWinner ? 'text-green-400' : 'text-white/60'}`}>{p.playerName}{p.showedCards && <span className="text-purple-300 ml-1 text-[9px]">🃏秀牌</span>}</div>
                               {p.initialChips !== undefined && (
                                 <div className="text-white/40 text-[9px]">带入 ${p.initialChips}</div>
+                              )}
+                              {p.rebuyAmount !== undefined && p.rebuyAmount > 0 && (
+                                <div className="text-orange-400/70 text-[9px]">补码 ${p.rebuyAmount}</div>
                               )}
                             </td>
                             <td className="py-1 px-1 text-right">
