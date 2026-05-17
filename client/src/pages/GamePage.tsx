@@ -226,6 +226,7 @@ export default function GamePage() {
       setIsReady(meInRoom?.isReady || false)
       if (meInRoom?.isAfk !== undefined) setIsAfk(meInRoom.isAfk)
       setIsWaitingForStart(false)
+      setIsMyTurn(data.gameState?.currentPlayerId === myPlayerId)
       setMyHandStartChips(meInRoom?.chips ?? null)
       setActionLogs([])
       setShowCardsInfo(null)
@@ -233,14 +234,18 @@ export default function GamePage() {
       addLog('系统', 'deal', undefined, data.gameState?.phase || 'pre-flop')
     }
 
-    const handleDealCards = (data: { handId: string; playerId: string; cards: [Card, Card] }) => {
+    const handleDealCards = (data: { handId: string; playerId: string; cards: Card[] }) => {
       if (myPlayerId && data.playerId === myPlayerId) {
-        setMyCards(data.cards)
+        setMyCards(data.cards as any)
       }
     }
 
     const handlePlayerTurn = (data: { playerId: string; validActions?: string[] }) => {
-      setIsMyTurn(data.playerId === myPlayerId)
+      const isMyTurnNow = data.playerId === myPlayerId
+      setIsMyTurn(isMyTurnNow)
+      if (isMyTurnNow) {
+        setIsWaitingForStart(false)
+      }
     }
 
     const handleActionResult = (data: any) => {
@@ -256,6 +261,8 @@ export default function GamePage() {
       addLog(actorName, data.action, data.amount, data.gameState?.phase)
       if (data.gameState?.currentPlayerId) {
         setIsMyTurn(data.gameState.currentPlayerId === myPlayerId)
+      } else {
+        setIsMyTurn(false)
       }
     }
 
@@ -925,6 +932,10 @@ export default function GamePage() {
       const result = await emit(ClientEvents.GET_CHIPS)
       if (result?.success) {
         addToast(`补充筹码 $${result.amount}`, 'success')
+        const readyResult = await emit(ClientEvents.PLAYER_READY, true)
+        if (readyResult?.success) {
+          setIsReady(true)
+        }
       } else {
         addToast(result?.error || '补筹码失败', 'error')
       }
@@ -2037,7 +2048,46 @@ export default function GamePage() {
           <div className="text-center text-red-400 text-sm py-1 bg-black/30">{message}</div>
         )}
 
-        {isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && gameState.phase !== 'run-it-twice-choice' && gameState.phase !== 'run-it-twice-dice' && (
+        {isMyTurn && !showResult && !isWaitingForStart && gameState.phase === 'discard' && myCards && myCards.length === 3 && (
+          <div className="bg-gray-900/90 border-t border-gray-700 p-2 md:p-3">
+            <div className="text-center text-yellow-300 text-xs md:text-sm mb-2 md:mb-3 font-bold">
+              🍍 请选择弃掉一张手牌
+            </div>
+            <div className="flex justify-center gap-2 md:gap-3">
+              {myCards.map((card, ci) => {
+                const suitSymbol: Record<string, string> = { hearts: '♥', diamonds: '♦', clubs: '♣', spades: '♠' }
+                const isRed = card.suit === 'hearts' || card.suit === 'diamonds'
+                return (
+                  <button
+                    key={ci}
+                    onClick={async () => {
+                      if (isSubmitting) return
+                      setIsSubmitting(true)
+                      try {
+                        const result = await emit(ClientEvents.DISCARD_CARD, { cardIndex: ci })
+                        if (!result?.success) {
+                          addToast(result?.error || '弃牌失败', 'error')
+                        }
+                      } catch (error: any) {
+                        addToast(error.message || '弃牌失败', 'error')
+                      } finally {
+                        setIsSubmitting(false)
+                      }
+                    }}
+                    disabled={isSubmitting}
+                    className={`w-14 h-20 md:w-20 md:h-28 bg-white rounded-lg border-2 border-gray-300 flex flex-col items-center justify-center shadow-md hover:border-red-500 hover:shadow-red-500/30 hover:shadow-lg transition-all cursor-pointer ${isRed ? 'text-red-600' : 'text-black'} ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <span className="font-bold text-sm md:text-xl leading-tight">{card.rank}</span>
+                    <span className="text-lg md:text-3xl leading-tight">{suitSymbol[card.suit]}</span>
+                    <span className="text-[8px] md:text-xs text-red-400 mt-0.5">弃掉</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {isMyTurn && !showResult && !isWaitingForStart && gameState.phase !== 'showdown' && gameState.phase !== 'ended' && gameState.phase !== 'waiting' && gameState.phase !== 'run-it-twice-choice' && gameState.phase !== 'run-it-twice-dice' && gameState.phase !== 'discard' && (
           <div className="bg-gray-900/90 border-t border-gray-700 p-2 md:p-3">
             <div className="text-center text-white/60 text-xs md:text-sm mb-1 md:mb-2">
               轮到你行动 {toCall > 0 ? `(需跟注 $${toCall})` : '(可以过牌)'}

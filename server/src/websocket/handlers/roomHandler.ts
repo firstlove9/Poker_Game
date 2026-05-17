@@ -30,6 +30,10 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
     p.playerRoomRole === PlayerRoomRole.ACTIVE || p.playerRoomRole === PlayerRoomRole.BUSTED
   );
   if (hasPlayedBefore) {
+    const REBUY_WAIT_MS = 15000;
+    if (room.handFinishTime && (Date.now() - room.handFinishTime) < REBUY_WAIT_MS) {
+      return false;
+    }
     const DISCONNECT_TIMEOUT_MS = 120000;
     const now = Date.now();
     const playersNeedReady = room.players.filter(p => {
@@ -84,6 +88,7 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
   const gameEngine = new GameEngine(readyPlayers, dealerIndex, gameConfig);
 
   room.status = RoomStatus.PLAYING;
+  room.handFinishTime = undefined;
   room.gameState = gameEngine.start();
 
   syncPlayerChipsToRoom(gameEngine, room);
@@ -126,23 +131,21 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
     gameState: sanitizeGameState(room.gameState),
   });
 
-  setTimeout(() => {
-    for (const player of room.players) {
-      const cards = gameEngine.getPlayerCards(player.id);
-      if (cards) {
-        const playerSockets = Array.from(io.sockets.sockets.values()).filter(
-          s => s.data.playerId === player.id
-        );
-        for (const s of playerSockets) {
-          s.emit(ServerEvents.DEAL_CARDS, {
-            handId,
-            playerId: player.id,
-            cards,
-          });
-        }
+  for (const player of room.players) {
+    const cards = gameEngine.getPlayerCards(player.id);
+    if (cards) {
+      const playerSockets = Array.from(io.sockets.sockets.values()).filter(
+        s => s.data.playerId === player.id
+      );
+      for (const s of playerSockets) {
+        s.emit(ServerEvents.DEAL_CARDS, {
+          handId,
+          playerId: player.id,
+          cards,
+        });
       }
     }
-  }, 100);
+  }
 
   const currentPlayerId = gameEngine.getCurrentPlayerId();
   if (currentPlayerId) {
@@ -1142,6 +1145,48 @@ export function handlePlayerTurnWithAfk(roomId: string, room: any, gameEngine: G
     setTimeout(() => {
       if (gameEngine.getCurrentPlayerId() !== currentPlayerId) return;
       if (!roomManager.getRoom(roomId)) return;
+
+      const currentGameState = gameEngine.getState();
+      if (currentGameState.phase === 'discard') {
+        const discardResult = gameEngine.discardCard(currentPlayerId, 2);
+        if (discardResult.success) {
+          room.gameState = gameEngine.getState();
+          const actor = room.players.find((p: any) => p.id === currentPlayerId);
+          io.to(roomId).emit(ServerEvents.ACTION_RESULT, {
+            playerId: currentPlayerId,
+            playerName: actor?.name || currentPlayerId,
+            action: 'discard',
+            amount: 0,
+            gameState: sanitizeGameState(room.gameState),
+            room: sanitizeRoom(room),
+          });
+
+          const newCards = gameEngine.getPlayerCards(currentPlayerId);
+          const playerSockets = Array.from(io.sockets.sockets.values()).filter(
+            s => s.data.playerId === currentPlayerId
+          );
+          for (const s of playerSockets) {
+            s.emit(ServerEvents.DEAL_CARDS, {
+              handId: room.gameState.handId,
+              playerId: currentPlayerId,
+              cards: newCards,
+            });
+          }
+
+          if (room.gameState.phase === 'pre-flop') {
+            const nextPlayerId = gameEngine.getCurrentPlayerId();
+            if (nextPlayerId) {
+              handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
+            }
+          } else if (room.gameState.phase === 'discard') {
+            const nextPlayerId = gameEngine.getCurrentPlayerId();
+            if (nextPlayerId) {
+              handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
+            }
+          }
+        }
+        return;
+      }
 
       const afkDecision = decideAfkAction(gameEngine, currentPlayerId);
       const { PlayerAction } = require('../../types/poker');

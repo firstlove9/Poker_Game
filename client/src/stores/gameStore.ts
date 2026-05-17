@@ -11,8 +11,8 @@ interface GameStore {
   setCurrentPlayer: (player: RoomPlayer | null) => void
   
   // 手牌
-  myCards: [Card, Card] | null
-  setMyCards: (cards: [Card, Card] | null) => void
+  myCards: Card[] | null
+  setMyCards: (cards: Card[] | null) => void
   
   // 游戏状态
   gameState: GameState | null

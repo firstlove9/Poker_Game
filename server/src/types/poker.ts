@@ -54,6 +54,7 @@ export interface HandEvaluation {
 export enum GamePhase {
   WAITING = 'waiting',
   PRE_FLOP = 'pre-flop',
+  DISCARD = 'discard',
   FLOP = 'flop',
   TURN = 'turn',
   RIVER = 'river',
@@ -74,6 +75,7 @@ export enum PlayerAction {
   ALL_IN = 'all-in',
   SB = 'sb',
   BB = 'bb',
+  DISCARD = 'discard',
 }
 
 // 玩家座位状态

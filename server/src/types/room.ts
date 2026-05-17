@@ -112,6 +112,7 @@ export interface Room {
     createdAt: number;
   };
   voteLeaveCooldowns?: Map<string, number>;
+  handFinishTime?: number;
 }
 
 export interface RunItTwiceDiceResult {

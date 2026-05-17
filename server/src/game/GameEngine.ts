@@ -138,13 +138,20 @@ export class GameEngine {
     this.dealHoleCards();
     this.postBlinds();
 
-    const isHeadsUp = this.players.length === 2;
-    if (isHeadsUp) {
-      this.state.currentPlayerIndex = this.state.smallBlindIndex;
+    const isPineapple = this.config.variant === GameVariant.PINEAPPLE;
+    if (isPineapple) {
+      this.state.phase = GamePhase.DISCARD;
+      this.state.currentPlayerIndex = this.state.dealerIndex;
+      this.state.currentPlayerId = this.players[this.state.dealerIndex]?.id || '';
     } else {
-      this.state.currentPlayerIndex = this.getNextActivePlayerIndex(this.state.bigBlindIndex);
+      const isHeadsUp = this.players.length === 2;
+      if (isHeadsUp) {
+        this.state.currentPlayerIndex = this.state.smallBlindIndex;
+      } else {
+        this.state.currentPlayerIndex = this.getNextActivePlayerIndex(this.state.bigBlindIndex);
+      }
+      this.state.currentPlayerId = this.players[this.state.currentPlayerIndex]?.id || '';
     }
-    this.state.currentPlayerId = this.players[this.state.currentPlayerIndex]?.id || '';
 
     return this.state;
   }
@@ -224,6 +231,10 @@ export class GameEngine {
   }
 
   performAction(playerId: string, action: PlayerAction, amount?: number): { success: boolean; error?: string } {
+    if (this.state.phase === GamePhase.DISCARD) {
+      return { success: false, error: '弃牌阶段请先弃掉一张手牌' };
+    }
+
     const playerIndex = this.players.findIndex(p => p.id === playerId);
     if (playerIndex === -1) {
       return { success: false, error: '玩家不存在' };
@@ -1596,6 +1607,73 @@ export class GameEngine {
     return true;
   }
 
+  discardCard(playerId: string, cardIndex: number): { success: boolean; error?: string } {
+    if (this.state.phase !== GamePhase.DISCARD) {
+      return { success: false, error: '当前不是弃牌阶段' };
+    }
+
+    const playerIndex = this.players.findIndex(p => p.id === playerId);
+    if (playerIndex === -1) {
+      return { success: false, error: '玩家不存在' };
+    }
+
+    if (playerIndex !== this.state.currentPlayerIndex) {
+      return { success: false, error: '不是你的回合' };
+    }
+
+    const cards = this.state.playerCards[playerId];
+    if (!cards || cards.length !== 3) {
+      return { success: false, error: '手牌数量不正确' };
+    }
+
+    if (cardIndex < 0 || cardIndex >= cards.length) {
+      return { success: false, error: '无效的卡牌索引' };
+    }
+
+    const discarded = cards.splice(cardIndex, 1);
+    this.state.actions.push({
+      playerId,
+      playerName: this.players[playerIndex].name,
+      action: 'discard',
+      amount: 0,
+      timestamp: Date.now(),
+      phase: this.state.phase,
+    });
+
+    const allDiscarded = this.players.every(p => {
+      const pc = this.state.playerCards[p.id];
+      return !pc || pc.length <= 2;
+    });
+
+    if (allDiscarded) {
+      this.state.phase = GamePhase.PRE_FLOP;
+      const isHeadsUp = this.players.length === 2;
+      if (isHeadsUp) {
+        this.state.currentPlayerIndex = this.state.smallBlindIndex;
+      } else {
+        this.state.currentPlayerIndex = this.getNextActivePlayerIndex(this.state.bigBlindIndex);
+      }
+      this.state.currentPlayerId = this.players[this.state.currentPlayerIndex]?.id || '';
+    } else {
+      const nextIndex = this.getNextActivePlayerIndex(playerIndex);
+      if (nextIndex === -1) {
+        this.state.phase = GamePhase.PRE_FLOP;
+        const isHeadsUp = this.players.length === 2;
+        if (isHeadsUp) {
+          this.state.currentPlayerIndex = this.state.smallBlindIndex;
+        } else {
+          this.state.currentPlayerIndex = this.getNextActivePlayerIndex(this.state.bigBlindIndex);
+        }
+        this.state.currentPlayerId = this.players[this.state.currentPlayerIndex]?.id || '';
+      } else {
+        this.state.currentPlayerIndex = nextIndex;
+        this.state.currentPlayerId = this.players[nextIndex]?.id || '';
+      }
+    }
+
+    return { success: true };
+  }
+
   recordRebuy(playerId: string, amount: number): void {
     const current = this.playerRebuyAmounts.get(playerId) || 0;
     this.playerRebuyAmounts.set(playerId, current + amount);
@@ -1618,6 +1696,14 @@ export class GameEngine {
 
     const status = this.state.playerStatus[playerId];
     if (status !== PlayerStatus.PLAYING) return [];
+
+    if (this.state.phase === GamePhase.DISCARD) {
+      const cards = this.state.playerCards[playerId];
+      if (cards && cards.length === 3) {
+        return ['discard'];
+      }
+      return [];
+    }
 
     const myBet = this.state.roundBets[playerId] || 0;
     const toCall = this.state.currentBet - myBet;
