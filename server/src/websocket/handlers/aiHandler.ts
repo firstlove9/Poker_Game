@@ -3,8 +3,19 @@ import { RoomManager } from '../../room/RoomManager';
 import { RoomStatus, PlayerRoomRole } from '../../types/room';
 import { GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO } from '../../types/poker';
 import { AICommand, AIRequest, AIResponse, AI_COMMAND_REGISTRY } from '../../types/ai';
-import { gameEngines } from './gameHandler';
-import { tryStartGame } from './roomHandler';
+import { gameEngines, finishHand } from './gameHandler';
+import { tryStartGame, handlePlayerTurnWithAfk } from './roomHandler';
+import { addActionLog, loadRoomLogs } from '../../room/ActionLogManager';
+
+function syncPlayerChipsToRoom(gameEngine: any, room: any): void {
+  const enginePlayers = gameEngine.getPlayers();
+  for (const ep of enginePlayers) {
+    const roomPlayer = room.players.find((p: any) => p.id === ep.id);
+    if (roomPlayer) {
+      roomPlayer.chips = ep.chips;
+    }
+  }
+}
 
 function ok(data?: any, log?: string, reqId?: string): AIResponse {
   return { ok: true, code: 0, data, log, reqId };
@@ -14,13 +25,15 @@ function fail(code: number, error: string, reqId?: string): AIResponse {
   return { ok: false, code, error, reqId };
 }
 
-function sanitizeGameState(gameState: any, playerId: string): any {
+function sanitizeGameState(gameState: any, playerId?: string): any {
   if (!gameState) return null;
   const sanitized = JSON.parse(JSON.stringify(gameState));
-  const myCards = sanitized.playerCards?.[playerId] || null;
-  delete sanitized.playerCards;
+  if (playerId) {
+    sanitized.myCards = sanitized.playerCards?.[playerId] || null;
+  }
+  sanitized.playerCards = {};
   delete sanitized.deck;
-  return { ...sanitized, myCards };
+  return sanitized;
 }
 
 function sanitizeRoom(room: any): any {
@@ -130,6 +143,18 @@ export function handleAICommands(socket: Socket, io: Server, roomManager: RoomMa
         respond(handleWhoami(playerId, roomManager));
         break;
 
+      case AICommand.RUN_IT_TWICE_CHOICE:
+        respond(handleRunItTwiceChoice(args, playerId, roomManager, io));
+        break;
+
+      case AICommand.ROLL_DICE:
+        respond(handleRollDice(playerId, roomManager, io));
+        break;
+
+      case AICommand.VOTE_EXTEND_HANDS:
+        respond(handleVoteExtendHands(args, playerId, roomManager, io, socket));
+        break;
+
       default:
         respond(fail(404, `Unknown command: ${cmd}. Type "help" to see available commands.`));
     }
@@ -194,6 +219,8 @@ function handleCreateRoom(args: Record<string, any>, playerId: string, roomManag
     smallBlind: args.smallBlind || 10,
     bigBlind: args.bigBlind || 20,
     hostName: args.playerName || 'AI_Player',
+    fixedHands: args.fixedHands,
+    maxRebuyCount: args.maxRebuyCount,
   }, playerId);
 
   socket.join(room.config.roomId);
@@ -414,6 +441,7 @@ function handleGetState(playerId: string, roomManager: RoomManager): AIResponse 
       chips: p.chips,
       isReady: p.isReady,
       isOnline: p.isOnline,
+      playerRoomRole: p.playerRoomRole,
       status: room.gameState?.playerStatus?.[p.id] || null,
       role: room.gameState?.playerRoles?.[p.id] || null,
       roundBet: room.gameState?.roundBets?.[p.id] || 0,
@@ -553,26 +581,111 @@ function handleAction(args: Record<string, any>, playerId: string, roomManager: 
     const gameState = gameEngine.getState();
     room.gameState = gameState;
 
-    const enginePlayers = gameEngine.getPlayers();
-    for (const ep of enginePlayers) {
-      const roomPlayer = room.players.find((p: any) => p.id === ep.id);
-      if (roomPlayer) roomPlayer.chips = ep.chips;
+    syncPlayerChipsToRoom(gameEngine, room);
+
+    const preActionState = gameEngine.getState();
+    const preActionBet = preActionState.roundBets[playerId] || 0;
+    const preActionChips = gameEngine.getPlayers().find((p: any) => p.id === playerId)?.chips || 0;
+
+    let actualAmount = args.amount;
+    if (normalizedAction === 'call') {
+      actualAmount = Math.min(preActionState.currentBet - preActionBet, preActionChips);
+    } else if (normalizedAction === 'all-in') {
+      actualAmount = preActionChips;
+    } else if (!actualAmount && normalizedAction !== 'fold' && normalizedAction !== 'check') {
+      const postActionBet = gameState.roundBets[playerId] || 0;
+      actualAmount = postActionBet - preActionBet;
     }
 
     const actor = room.players.find((p: any) => p.id === playerId);
+    if (actor) {
+      loadRoomLogs(roomId);
+      addActionLog(roomId, gameState.handId || '', playerId, actor.name, normalizedAction, actualAmount, gameState.phase);
+    }
     const actorName = actor?.name || playerId;
 
     const { GamePhase } = require('../../types/poker');
     const isGameEnding = gameState.phase === GamePhase.SHOWDOWN || gameState.phase === GamePhase.ENDED;
+    const isRunItTwiceChoice = gameState.phase === GamePhase.RUN_IT_TWICE_CHOICE;
 
     io.to(roomId).emit('game:action_result', {
       playerId,
       playerName: actorName,
       action: normalizedAction,
-      amount: args.amount,
-      gameState: { ...gameState, playerCards: {} },
-      room: sanitizeRoom(room),
+      amount: actualAmount,
+      gameState: sanitizeGameState(gameState),
+      ...(isGameEnding ? {} : { room: sanitizeRoom(room) }),
     });
+
+    if (isRunItTwiceChoice) {
+      const nonFoldedPlayers = room.players.filter((p: any) =>
+        gameState.playerStatus?.[p.id] !== 'folded'
+      );
+      io.to(roomId).emit('game:run_it_twice_ask', {
+        gameState: sanitizeGameState(gameState),
+        players: nonFoldedPlayers.map((p: any) => ({ id: p.id, name: p.name })),
+      });
+
+      for (const p of nonFoldedPlayers) {
+        if (p.isAfk) {
+          const afkChoiceResult = gameEngine.submitRunItTwiceChoice(p.id, 'once');
+          if (afkChoiceResult.success) {
+            const afkActor = room.players.find((rp: any) => rp.id === p.id);
+            io.to(roomId).emit('game:run_it_twice_choice_result', {
+              playerId: p.id,
+              playerName: afkActor?.name || p.id,
+              choice: 'once',
+              gameState: sanitizeGameState(gameEngine.getState()),
+            });
+
+            if (afkChoiceResult.bothSubmitted) {
+              room.gameState = gameEngine.getState();
+              if (afkChoiceResult.needDice) {
+                io.to(roomId).emit('game:run_it_twice_dice_result', {
+                  gameState: sanitizeGameState(gameEngine.getState()),
+                  needDice: true,
+                  players: room.players
+                    .filter((rp: any) => gameState.playerStatus?.[rp.id] !== 'folded')
+                    .map((rp: any) => ({ id: rp.id, name: rp.name })),
+                });
+              } else {
+                const finalChoice = afkChoiceResult.finalChoice || 'once';
+                io.to(roomId).emit('game:run_it_twice_executing', {
+                  finalChoice,
+                  gameState: sanitizeGameState(gameEngine.getState()),
+                });
+
+                const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
+                const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
+                const finalGameState = gameEngine.getState();
+                room.gameState = finalGameState;
+                syncPlayerChipsToRoom(gameEngine, room);
+
+                for (const w of winners) {
+                  const roomPlayer = room.players.find((rp: any) => rp.id === w.playerId);
+                  if (roomPlayer) w.playerName = roomPlayer.name;
+                }
+                for (const h of allHands) {
+                  const roomPlayer = room.players.find((rp: any) => rp.id === h.playerId);
+                  if (roomPlayer) h.playerName = roomPlayer.name;
+                }
+
+                finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
+              }
+            }
+          }
+        }
+      }
+
+      return ok(
+        {
+          action: normalizedAction,
+          amount: args.amount,
+          phase: 'run-it-twice-choice',
+        },
+        `Action: ${normalizedAction}${args.amount ? ` ${args.amount}` : ''} → Run-it-twice choice needed!`
+      );
+    }
 
     if (isGameEnding) {
       const { winners, potResults, allHands } = gameEngine.showdown();
@@ -593,98 +706,36 @@ function handleAction(args: Record<string, any>, playerId: string, roomManager: 
         if (roomPlayer) h.playerName = roomPlayer.name;
       }
 
-      room.status = RoomStatus.WAITING;
-      for (const p of room.players) {
-        const isInGame = gameEngine.getPlayers().some(gp => gp.id === p.id);
-        if (isInGame) p.isReady = false;
-      }
-
-      io.to(roomId).emit('game:showdown', {
-        winners,
-        potResults,
-        allHands,
-        communityCards: finalGameState.communityCards,
-        gameState: { ...finalGameState, playerCards: {} },
-        room: sanitizeRoom(room),
-      });
-
-      io.to(roomId).emit('game:hand_result', {
-        winners,
-        potResults,
-        allHands,
-        communityCards: finalGameState.communityCards,
-        room: sanitizeRoom(room),
-      });
-
-      room.gameState = {
-        ...room.gameState,
-        currentBet: 0,
-        minRaise: room.config?.bigBlind || 20,
-        roundBets: {},
-        pots: [],
-        totalPot: 0,
-        actions: [],
-        communityCards: [],
-        playerCards: {},
-        playerStatus: {},
-        playerRoles: {},
-        lastRaiseIndex: -1,
-        currentPlayerIndex: -1,
-        currentPlayerId: '',
-        isHeadsUpAllIn: false,
-        runItTwiceChoices: {},
-        runItTwiceDiceResult: null,
-        runItTwiceDiceReady: {},
-        runItTwiceBoard: [],
-        runItTwiceResults: [],
-        lastShowdownResult: {
-          winners,
-          allHands,
-          communityCards: finalGameState.communityCards,
-          runItTwiceBoard: finalGameState.runItTwiceBoard || [],
-          runItTwiceResults: finalGameState.runItTwiceResults || [],
-        },
-      };
-
-      io.to(roomId).emit('room:updated', {
-        type: 'updated',
-        room: sanitizeRoom(room),
-      });
+      finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager);
 
       return ok(
         {
           action: normalizedAction,
-          amount: args.amount,
+          amount: actualAmount,
           phase: 'showdown',
           winners: winners.map((w: any) => ({ id: w.playerId, name: w.playerName, amount: w.winAmount, hand: w.handDescription })),
           myCards: gameEngine.getPlayerCards(playerId),
         },
-        `Action: ${normalizedAction}${args.amount ? ` ${args.amount}` : ''} → Showdown! Winner: ${winners.map((w: any) => w.playerName).join(', ')}`
+        `Action: ${normalizedAction}${actualAmount ? ` ${actualAmount}` : ''} → Showdown! Winner: ${winners.map((w: any) => w.playerName).join(', ')}`
       );
     }
 
     const nextPlayerId = gameEngine.getCurrentPlayerId();
     if (nextPlayerId) {
-      const nextPlayer = room.players.find((p: any) => p.id === nextPlayerId);
-      io.to(roomId).emit('game:player_turn', {
-        playerId: nextPlayerId,
-        playerName: nextPlayer?.name || nextPlayerId,
-        timeout: 30,
-        validActions: gameEngine.getValidActions(nextPlayerId),
-      });
+      handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
     }
 
     const isMyNextTurn = gameEngine.getCurrentPlayerId() === playerId;
     return ok(
       {
         action: normalizedAction,
-        amount: args.amount,
+        amount: actualAmount,
         phase: gameState.phase,
         isMyTurn: isMyNextTurn,
         pot: gameState.totalPot,
         currentBet: gameState.currentBet,
       },
-      `Action: ${normalizedAction}${args.amount ? ` ${args.amount}` : ''} → Phase: ${gameState.phase}${isMyNextTurn ? ' (your turn again!)' : ''}`
+      `Action: ${normalizedAction}${actualAmount ? ` ${actualAmount}` : ''} → Phase: ${gameState.phase}${isMyNextTurn ? ' (your turn again!)' : ''}`
     );
   }
 
@@ -698,11 +749,34 @@ function handleGetChips(playerId: string, roomManager: RoomManager, io: Server):
     if (roomId) {
       const room = roomManager.getRoom(roomId);
       if (room) {
+        const gameEngine = gameEngines.get(roomId);
+        if (gameEngine && room.status === RoomStatus.PLAYING) {
+          gameEngine.recordRebuy(playerId, result.amount || 0);
+          syncPlayerChipsToRoom(gameEngine, room);
+        }
+
+        const player = room.players.find((p: any) => p.id === playerId);
+        if (player && !player.isReady && room.status !== RoomStatus.PLAYING) {
+          player.isReady = true;
+        }
+
+        roomManager.syncScoreboard(roomId);
+
         io.to(roomId).emit('system:chips_received', {
           playerId,
           amount: result.amount,
           room: sanitizeRoom(room),
         });
+
+        if (player && player.isReady) {
+          io.to(roomId).emit('room:player_ready_changed', {
+            playerId,
+            ready: true,
+            room: sanitizeRoom(room),
+          });
+
+          tryStartGame(roomId, roomManager, io);
+        }
       }
     }
     return ok({ amount: result.amount }, `Chips replenished: ${result.amount}`);
@@ -750,6 +824,8 @@ function handleDeclineRebuy(playerId: string, roomManager: RoomManager, io: Serv
       winner: winner ? { id: winner.id, name: winner.name, chips: winner.chips } : null,
       room: sanitizeRoom(room),
     });
+  } else {
+    tryStartGame(roomId, roomManager, io);
   }
 
   return ok(null, 'Declined rebuy, now spectating');
@@ -906,4 +982,328 @@ function handleWhoami(playerId: string, roomManager: RoomManager): AIResponse {
     roomId: roomId || null,
     room: roomInfo,
   });
+}
+
+function handleRunItTwiceChoice(args: Record<string, any>, playerId: string, roomManager: RoomManager, io: Server): AIResponse {
+  const choice = args.choice;
+  if (!choice || (choice !== 'once' && choice !== 'twice')) {
+    return fail(400, 'Missing or invalid parameter: --choice (must be "once" or "twice")');
+  }
+
+  const roomId = roomManager.getPlayerRoomId(playerId);
+  if (!roomId) {
+    return fail(400, 'You are not in any room');
+  }
+
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail(404, 'Room not found');
+  }
+
+  const gameEngine = gameEngines.get(roomId);
+  if (!gameEngine) {
+    return fail(404, 'Game engine not found');
+  }
+
+  const gameState = gameEngine.getState();
+  if (gameState.phase !== 'run-it-twice-choice') {
+    return fail(409, `Not in run-it-twice-choice phase (current: ${gameState.phase})`);
+  }
+
+  const result = gameEngine.submitRunItTwiceChoice(playerId, choice as 'once' | 'twice');
+  if (!result.success) {
+    return fail(400, result.error || 'Failed to submit run-it-twice choice');
+  }
+
+  room.gameState = gameEngine.getState();
+
+  const actor = room.players.find((p: any) => p.id === playerId);
+  io.to(roomId).emit('game:run_it_twice_choice_result', {
+    playerId,
+    playerName: actor?.name || playerId,
+    choice,
+    gameState: sanitizeGameState(gameEngine.getState()),
+  });
+
+  if (result.bothSubmitted) {
+    if (result.needDice) {
+      io.to(roomId).emit('game:run_it_twice_dice_result', {
+        gameState: sanitizeGameState(gameEngine.getState()),
+        needDice: true,
+        players: room.players
+          .filter((p: any) => gameEngine.getState().playerStatus?.[p.id] !== 'folded')
+          .map((p: any) => ({ id: p.id, name: p.name })),
+      });
+      return ok({ choice, needDice: true }, `Run-it-twice choice: ${choice}. Dice needed!`);
+    }
+
+    const finalChoice = result.finalChoice || 'once';
+    io.to(roomId).emit('game:run_it_twice_executing', {
+      finalChoice,
+      gameState: sanitizeGameState(gameEngine.getState()),
+    });
+
+    const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
+    const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
+    const finalGameState = gameEngine.getState();
+    room.gameState = finalGameState;
+    syncPlayerChipsToRoom(gameEngine, room);
+
+    for (const w of winners) {
+      const roomPlayer = room.players.find((p: any) => p.id === w.playerId);
+      if (roomPlayer) w.playerName = roomPlayer.name;
+    }
+    for (const h of allHands) {
+      const roomPlayer = room.players.find((p: any) => p.id === h.playerId);
+      if (roomPlayer) h.playerName = roomPlayer.name;
+    }
+
+    finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
+
+    const myCards = gameEngine.getPlayerCards(playerId);
+    return ok(
+      {
+        choice,
+        finalChoice,
+        phase: 'showdown',
+        winners: winners.map((w: any) => ({ id: w.playerId, name: w.playerName, amount: w.winAmount, hand: w.handDescription })),
+        myCards,
+      },
+      `Run-it-twice choice: ${choice} → Final: ${finalChoice}, Winner: ${winners.map((w: any) => w.playerName).join(', ')}`
+    );
+  }
+
+  return ok({ choice, waitingForOther: true }, `Run-it-twice choice: ${choice}, waiting for opponent`);
+}
+
+function handleRollDice(playerId: string, roomManager: RoomManager, io: Server): AIResponse {
+  const roomId = roomManager.getPlayerRoomId(playerId);
+  if (!roomId) {
+    return fail(400, 'You are not in any room');
+  }
+
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail(404, 'Room not found');
+  }
+
+  const gameEngine = gameEngines.get(roomId);
+  if (!gameEngine) {
+    return fail(404, 'Game engine not found');
+  }
+
+  const gameState = gameEngine.getState();
+  if (!gameState.runItTwiceDiceReady || gameState.runItTwiceDiceReady[playerId]) {
+    return fail(409, 'Cannot roll dice now');
+  }
+
+  const result = gameEngine.submitDiceRoll(playerId);
+  if (!result.success) {
+    return fail(400, result.error || 'Failed to roll dice');
+  }
+
+  const actor = room.players.find((p: any) => p.id === playerId);
+  const updatedState = gameEngine.getState();
+
+  io.to(roomId).emit('game:run_it_twice_dice_result', {
+    playerId,
+    playerName: actor?.name || playerId,
+    ready: true,
+    diceReady: updatedState.runItTwiceDiceReady,
+    gameState: sanitizeGameState(updatedState),
+    needDice: true,
+  });
+
+  if (result.bothReady && result.diceResult) {
+    const isTied = gameEngine.isDiceTied();
+
+    io.to(roomId).emit('game:run_it_twice_dice_result', {
+      bothReady: true,
+      diceResult: result.diceResult,
+      diceReady: updatedState.runItTwiceDiceReady,
+      isTied,
+      gameState: sanitizeGameState(updatedState),
+      needDice: true,
+    });
+
+    if (isTied) {
+      setTimeout(() => {
+        gameEngine.resetDiceForReroll();
+        const rerollState = gameEngine.getState();
+        io.to(roomId).emit('game:run_it_twice_dice_result', {
+          reroll: true,
+          gameState: sanitizeGameState(rerollState),
+          needDice: true,
+          players: room.players
+            .filter((p: any) => rerollState.playerStatus?.[p.id] !== 'folded')
+            .map((p: any) => ({ id: p.id, name: p.name })),
+        });
+      }, 2000);
+      return ok({ isTied: true }, 'Dice tied! Rerolling...');
+    }
+
+    const finalChoice = result.diceResult.finalChoice;
+    io.to(roomId).emit('game:run_it_twice_executing', {
+      finalChoice,
+      gameState: sanitizeGameState(gameEngine.getState()),
+    });
+
+    setTimeout(() => {
+      const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
+      const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
+      const finalGameState = gameEngine.getState();
+      room.gameState = finalGameState;
+      syncPlayerChipsToRoom(gameEngine, room);
+
+      for (const w of winners) {
+        const roomPlayer = room.players.find((p: any) => p.id === w.playerId);
+        if (roomPlayer) w.playerName = roomPlayer.name;
+      }
+      for (const h of allHands) {
+        const roomPlayer = room.players.find((p: any) => p.id === h.playerId);
+        if (roomPlayer) h.playerName = roomPlayer.name;
+      }
+
+      finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
+    }, 2000);
+
+    return ok({ finalChoice, diceResult: result.diceResult }, `Dice rolled! Final choice: ${finalChoice}`);
+  }
+
+  return ok({ waitingForOther: true }, 'Dice rolled, waiting for opponent');
+}
+
+function handleVoteExtendHands(args: Record<string, any>, playerId: string, roomManager: RoomManager, io: Server, socket: Socket): AIResponse {
+  const approve = args.approve;
+  if (approve === undefined || approve === null) {
+    return fail(400, 'Missing required parameter: --approve (true/false)');
+  }
+
+  const roomId = roomManager.getPlayerRoomId(playerId);
+  if (!roomId) {
+    return fail(400, 'You are not in any room');
+  }
+
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail(404, 'Room not found');
+  }
+
+  if (!room.config.fixedHands || room.config.fixedHands <= 0) {
+    return fail(400, 'This room does not use fixed hands mode');
+  }
+
+  if (room.handCount < room.config.fixedHands) {
+    return fail(400, `Fixed hands limit not reached yet (${room.handCount}/${room.config.fixedHands})`);
+  }
+
+  const player = room.players.find((p: any) => p.id === playerId);
+  if (!player) {
+    return fail(400, 'Player not in room');
+  }
+
+  if (!room.voteExtendHands) {
+    room.voteExtendHands = {
+      initiatorId: playerId,
+      initiatorName: player.name,
+      votes: new Map([[playerId, !!approve]]),
+      approved: false,
+      createdAt: Date.now(),
+      extendCount: 10,
+    };
+
+    io.to(roomId).emit('room:vote_extend_hands_started', {
+      initiatorId: playerId,
+      initiatorName: player.name,
+      votes: Object.fromEntries(room.voteExtendHands.votes),
+      votedPlayers: room.voteExtendHands.votes.size,
+      totalPlayers: room.players.filter((p: any) => p.isOnline && p.playerRoomRole !== PlayerRoomRole.SPECTATOR).length,
+      createdAt: room.voteExtendHands.createdAt,
+      extendCount: 10,
+      room: sanitizeRoom(room),
+    });
+
+    return ok({ initiated: true, approve: !!approve }, `Vote extend hands initiated: ${approve ? 'approve' : 'reject'}`);
+  }
+
+  room.voteExtendHands.votes.set(playerId, !!approve);
+
+  io.to(roomId).emit('room:vote_extend_hands_response', {
+    playerId,
+    approve: !!approve,
+    votes: Object.fromEntries(room.voteExtendHands.votes),
+    votedPlayers: room.voteExtendHands.votes.size,
+    totalPlayers: room.players.filter((p: any) => p.isOnline && p.playerRoomRole !== PlayerRoomRole.SPECTATOR).length,
+    room: sanitizeRoom(room),
+  });
+
+  const eligiblePlayers = room.players.filter((p: any) => p.isOnline && p.playerRoomRole !== PlayerRoomRole.SPECTATOR);
+  const approveCount = Array.from(room.voteExtendHands.votes.values()).filter((v: boolean) => v).length;
+  const rejectCount = Array.from(room.voteExtendHands.votes.values()).filter((v: boolean) => !v).length;
+
+  if (approveCount >= 2) {
+    room.config.fixedHands! += room.voteExtendHands.extendCount;
+    const extendCount = room.voteExtendHands.extendCount;
+    room.voteExtendHands = undefined;
+
+    for (const p of room.players) {
+      if (p.playerRoomRole !== PlayerRoomRole.SPECTATOR && p.chips > 0 && p.isOnline && !p.isAfk) {
+        p.isReady = true;
+      }
+    }
+
+    io.to(roomId).emit('room:vote_extend_hands_ended', {
+      approved: true,
+      newFixedHands: room.config.fixedHands,
+      extendCount,
+      room: sanitizeRoom(room),
+    });
+
+    tryStartGame(roomId, roomManager, io);
+
+    return ok({ approved: true, newFixedHands: room.config.fixedHands, extendCount }, `Vote approved! Fixed hands extended to ${room.config.fixedHands}`);
+  } else if (rejectCount >= 1 && (eligiblePlayers.length - rejectCount) < 2) {
+    room.voteExtendHands = undefined;
+
+    io.to(roomId).emit('room:vote_extend_hands_ended', {
+      approved: false,
+      room: sanitizeRoom(room),
+    });
+
+    return ok({ approved: false }, 'Vote rejected: not enough approvals');
+  } else if (room.voteExtendHands && room.players.every((p: any) => room.voteExtendHands!.votes.has(p.id) || !p.isOnline || p.playerRoomRole === PlayerRoomRole.SPECTATOR)) {
+    if (approveCount >= 2) {
+      room.config.fixedHands! += room.voteExtendHands.extendCount;
+      const extendCount = room.voteExtendHands.extendCount;
+      room.voteExtendHands = undefined;
+
+      for (const p of room.players) {
+        if (p.playerRoomRole !== PlayerRoomRole.SPECTATOR && p.chips > 0 && p.isOnline && !p.isAfk) {
+          p.isReady = true;
+        }
+      }
+
+      io.to(roomId).emit('room:vote_extend_hands_ended', {
+        approved: true,
+        newFixedHands: room.config.fixedHands,
+        extendCount,
+        room: sanitizeRoom(room),
+      });
+
+      tryStartGame(roomId, roomManager, io);
+
+      return ok({ approved: true, newFixedHands: room.config.fixedHands, extendCount }, `Vote approved! Fixed hands extended to ${room.config.fixedHands}`);
+    } else {
+      room.voteExtendHands = undefined;
+
+      io.to(roomId).emit('room:vote_extend_hands_ended', {
+        approved: false,
+        room: sanitizeRoom(room),
+      });
+
+      return ok({ approved: false }, 'Vote rejected: not enough approvals');
+    }
+  }
+
+  return ok({ responded: true, approve: !!approve, waitingForMore: true }, `Vote recorded: ${approve ? 'approve' : 'reject'}. Waiting for more votes.`);
 }

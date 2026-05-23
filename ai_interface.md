@@ -72,7 +72,7 @@ socket.on('ai:connected', (data) => {
     "playerId": "ai_1709123456_abc123def",
     "namespace": "/ai",
     "protocol": "1.0",
-    "commands": [/* 完整指令注册表，包含所有16条指令的定义 */]
+    "commands": [/* 完整指令注册表，包含所有20条指令的定义 */]
   },
   "log": "Connected as ai_1709123456_abc123def. Type \"help\" to see available commands."
 }
@@ -228,6 +228,8 @@ sio.emit('ai:cmd', {
 | `password` | string | 否 | — | 房间密码 |
 | `smallBlind` | number | 否 | 10 | 小盲注金额 |
 | `bigBlind` | number | 否 | 20 | 大盲注金额 |
+| `fixedHands` | number | 否 | 0 | 固定局数（0=无限，最少3局） |
+| `maxRebuyCount` | number | 否 | 3 | 最大补码次数（-1=无限，0=不允许） |
 | `playerName` | string | 否 | `AI_Player` | 你的显示名称 |
 
 > `maxPlayers` 会被变体的上限截断。例如 `squid_holdem` 最多2人，即使传入 `maxPlayers=9` 也会被限制为2。
@@ -413,9 +415,11 @@ sio.emit('ai:cmd', {
         "chips": 980,
         "isReady": true,
         "isOnline": true,
+        "isAfk": false,
         "status": "playing",
         "role": "sb",
-        "roundBet": 20
+        "roundBet": 20,
+        "playerRoomRole": "active"
       },
       {
         "id": "ai_1709123457_def",
@@ -423,9 +427,11 @@ sio.emit('ai:cmd', {
         "chips": 990,
         "isReady": true,
         "isOnline": true,
+        "isAfk": false,
         "status": "playing",
         "role": "bb",
-        "roundBet": 10
+        "roundBet": 10,
+        "playerRoomRole": "active"
       }
     ],
     "myCards": [
@@ -455,15 +461,19 @@ sio.emit('ai:cmd', {
 | `myCards` | array | 你的底牌，每张 `{suit, rank, code}` |
 | `isMyTurn` | boolean | 是否轮到你行动 |
 | `validActions` | array | 当前可用的行动列表 |
-| `phase` | string | 当前阶段：`pre-flop` / `flop` / `turn` / `river` / `showdown` / `ended` |
+| `phase` | string | 当前阶段：`discard` / `pre-flop` / `flop` / `turn` / `river` / `run-it-twice-choice` / `run-it-twice-executing` / `showdown` / `ended` |
 | `communityCards` | array | 公共牌 |
 | `pot` | number | 底池总额 |
 | `currentBet` | number | 当前轮最高下注 |
 | `minRaise` | number | 最小加注额 |
 | `players[].role` | string | 位置角色：`dealer` / `sb` / `bb` |
-| `players[].status` | string | 玩家状态：`playing` / `folded` / `all-in` |
+| `players[].status` | string | 玩家状态：`playing` / `folded` / `all-in` / `discard` |
 | `players[].roundBet` | number | 当前轮下注额 |
+| `players[].isAfk` | boolean | 是否挂机 |
+| `players[].playerRoomRole` | string | 房间角色：`active` / `busted` / `spectator` / `seated` |
 | `lastResult` | object | 上一局结果（仅牌局结束后存在） |
+
+> `discard` 阶段仅出现在 `pineapple`（大菠萝）变体中，玩家需选择弃掉一张底牌。
 
 **错误场景**：
 - `400` — 不在任何房间
@@ -528,14 +538,14 @@ sio.emit('ai:cmd', {
 
 ### 10. `action` — 执行扑克行动
 
-执行一个扑克行动（弃牌、过牌、跟注、加注、全下）。
+执行一个扑克行动（弃牌、过牌、跟注、加注、全下、弃底牌）。
 
 **参数**：
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `action` | string | **是** | 行动类型：`fold` / `check` / `call` / `raise` / `all-in` |
-| `amount` | number | 否 | 加注金额（`raise` 时必填） |
+| `action` | string | **是** | 行动类型：`fold` / `check` / `call` / `raise` / `all-in` / `discard` |
+| `amount` | number | 否 | 加注金额（`raise` 时必填），弃牌索引（`discard` 时为要弃掉的底牌索引，0-based） |
 
 **请求示例**：
 ```json
@@ -547,6 +557,11 @@ sio.emit('ai:cmd', {
 ```json
 { "cmd": "action", "args": { "action": "fold" } }
 ```
+```json
+{ "cmd": "action", "args": { "action": "discard", "amount": 2 } }
+```
+
+> `discard` 行动仅在大菠萝（pineapple）变体的 `discard` 阶段可用，`amount` 指定要弃掉的底牌索引（0-based）。
 
 **响应示例（行动成功，牌局继续）**：
 ```json
@@ -556,7 +571,10 @@ sio.emit('ai:cmd', {
   "data": {
     "action": "call",
     "amount": null,
-    "phase": "pre-flop"
+    "phase": "pre-flop",
+    "isMyTurn": false,
+    "pot": 50,
+    "currentBet": 20
   },
   "log": "Action: call → Phase: pre-flop"
 }
@@ -591,7 +609,7 @@ sio.emit('ai:cmd', {
 
 ### 11. `get-chips` — 补充筹码
 
-当玩家破产（BUSTED）时，补充筹码到初始买入金额，角色从 BUSTED 变回 ACTIVE。
+当玩家破产（BUSTED）时，补充筹码到初始买入金额，角色从 BUSTED 变回 ACTIVE。补充筹码后自动设为准备状态（`isReady = true`），等同于已点击"准备下一局"。
 
 **参数**：无
 
@@ -611,9 +629,12 @@ sio.emit('ai:cmd', {
 ```
 
 **错误场景**：
-- `400` — 玩家未破产（非 BUSTED 状态）
+- `400` — 玩家未破产 / 已达最大补筹码次数 / 不在任何房间
 
-> 补充筹码后，房间内其他玩家会收到 `system:chips_received` 事件通知。
+> 补充筹码后：
+> 1. 房间内其他玩家会收到 `system:chips_received` 事件通知
+> 2. 你的 `isReady` 自动设为 `true`，无需再调用 `ready`
+> 3. 如果所有玩家都已准备，游戏会自动开始
 
 ---
 
@@ -696,13 +717,17 @@ sio.emit('ai:cmd', {
       {
         "id": "texas_nlhe",
         "name": "常规德州",
+        "icon": "🤠",
         "category": "texas_series",
         "shortDesc": "2张底牌，无限制下注",
+        "fullDesc": "标准德州扑克（NLHE），最经典的扑克玩法...",
         "holeCardCount": 2,
         "communityCardCount": 5,
         "boardCount": 1,
         "isPotLimit": false,
         "isFixedLimit": false,
+        "specialRules": ["自由组合2张底牌与5张公共牌", "无限制下注", "A可当5组成A-6-7-8-9最小顺子"],
+        "forceCombination": "free",
         "maxPlayers": 10
       }
     ]
@@ -734,14 +759,11 @@ sio.emit('ai:cmd', {
       {
         "id": "none",
         "name": "无",
+        "icon": "",
         "shortDesc": "不使用特殊修饰",
+        "fullDesc": "不使用任何特殊修饰，按基础玩法规则进行。",
+        "specialRules": [],
         "needsBaseVariant": false
-      },
-      {
-        "id": "bomb_pot",
-        "name": "炸弹彩池",
-        "shortDesc": "强制前注，翻前无弃牌/加注",
-        "needsBaseVariant": true
       }
     ]
   },
@@ -775,7 +797,7 @@ sio.emit('ai:cmd', {
   "ok": true,
   "code": 0,
   "data": {
-    "variant": "texas_nlhe",
+    "id": "texas_nlhe",
     "name": "常规德州",
     "fullDesc": "标准德州扑克（NLHE），最经典的扑克玩法...",
     "holeCardCount": 2,
@@ -783,25 +805,24 @@ sio.emit('ai:cmd', {
     "boardCount": 1,
     "isPotLimit": false,
     "isFixedLimit": false,
-    "specialRules": [
-      "自由组合2张底牌与5张公共牌",
-      "无限制下注",
-      "A可当5组成A-6-7-8-9最小顺子"
-    ],
-    "maxPlayers": 10
+    "specialRules": ["自由组合2张底牌与5张公共牌", "无限制下注", "A可当5组成A-6-7-8-9最小顺子"],
+    "maxPlayers": 10,
+    "handRankOrder": ["royal_flush", "straight_flush", "four_of_a_kind", "..."],
+    "modifier": null
   },
   "log": "Rules for texas_nlhe: 标准德州扑克（NLHE）..."
 }
 ```
 
 **错误场景**：
-- `400` — 无效的变体名
+- `400` — 无效的变体名 / 不在房间中且未指定 variant
+- `404` — 变体不存在
 
 ---
 
 ### 17. `whoami` — 查看身份信息
 
-查看自己的玩家ID、名称、当前房间和状态。
+查看自己的玩家ID、当前房间和状态。
 
 **参数**：无
 
@@ -810,61 +831,249 @@ sio.emit('ai:cmd', {
 { "cmd": "whoami", "args": {} }
 ```
 
-**响应示例**：
+**响应示例（在房间中）**：
 ```json
 {
   "ok": true,
   "code": 0,
   "data": {
     "playerId": "ai_1709123456_abc",
-    "name": "AI_Player",
-    "isAI": true,
     "roomId": "XYZ789",
-    "roomName": "AI Arena",
-    "isHost": true,
-    "isReady": true,
-    "chips": 980,
-    "isOnline": true
+    "room": {
+      "roomId": "XYZ789",
+      "roomName": "AI Arena",
+      "isHost": true,
+      "variant": "texas_nlhe",
+      "modifier": "none",
+      "chips": 980,
+      "isReady": true,
+      "playerCount": 3,
+      "maxPlayers": 6
+    }
   },
   "log": "You are AI_Player (ai_1709123456_abc), in room AI Arena (XYZ789), host=true, ready=true"
 }
 ```
 
+**响应示例（不在房间中）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": {
+    "playerId": "ai_1709123456_abc",
+    "roomId": null,
+    "room": null
+  },
+  "log": "You are ai_1709123456_abc, not in any room"
+}
+```
+
+---
+
+### 18. `run-it-twice-choice` — 选择是否发两次牌
+
+当场上只剩两名玩家且有人全下时，进入 `run-it-twice-choice` 阶段。两名活跃玩家需各自选择是否发两次公共牌。
+
+**参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `choice` | string | **是** | 选择：`once`（发一次）或 `twice`（发两次） |
+
+**请求示例**：
+```json
+{ "cmd": "run-it-twice-choice", "args": { "choice": "once" } }
+```
+```json
+{ "cmd": "run-it-twice-choice", "args": { "choice": "twice" } }
+```
+
+**响应示例（等待对手选择）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "choice": "twice", "waitingForOther": true },
+  "log": "Run-it-twice choice: twice, waiting for opponent"
+}
+```
+
+**响应示例（双方都选了，需要掷骰子）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "choice": "twice", "needDice": true },
+  "log": "Run-it-twice choice: twice. Dice needed!"
+}
+```
+
+**响应示例（双方选择不同，直接执行）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": {
+    "choice": "once",
+    "finalChoice": "once",
+    "phase": "showdown",
+    "winners": [{ "id": "ai_xxx", "name": "AI_Player", "amount": 60, "hand": "One Pair" }],
+    "myCards": [{ "suit": "hearts", "rank": "A", "code": "AH" }]
+  },
+  "log": "Run-it-twice choice: once → Final: once, Winner: AI_Player"
+}
+```
+
+**错误场景**：
+- `400` — 无效的 choice 参数 / 不在任何房间 / 游戏引擎未找到
+- `409` — 不在 run-it-twice-choice 阶段
+
+> 当两名玩家都选择 `twice` 时，需要通过 `roll-dice` 命令掷骰子决定发牌顺序。当选择不同时（一个选 once 一个选 twice），最终选择为 `once`。
+
+---
+
+### 19. `roll-dice` — 掷骰子
+
+当两名玩家都选择 `twice` 时，需要掷骰子决定发牌顺序。两名活跃玩家各自调用此命令。
+
+**参数**：无
+
+**请求示例**：
+```json
+{ "cmd": "roll-dice", "args": {} }
+```
+
+**响应示例（等待对手掷骰子）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "waitingForOther": true },
+  "log": "Dice rolled, waiting for opponent"
+}
+```
+
+**响应示例（双方都掷了，有结果）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "finalChoice": "twice", "diceResult": { "finalChoice": "twice" } },
+  "log": "Dice rolled! Final choice: twice"
+}
+```
+
+**响应示例（骰子平局，需要重掷）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "isTied": true },
+  "log": "Dice tied! Rerolling..."
+}
+```
+
+**错误场景**：
+- `400` — 不在任何房间 / 游戏引擎未找到
+- `409` — 当前不能掷骰子（不在正确阶段 / 已掷过）
+
+---
+
+### 20. `vote-extend-hands` — 投票延长固定局数
+
+在计次局（fixedHands > 0）中，当已完成局数达到固定局数时，可以发起投票延长10局。第一个调用此命令的玩家成为发起者，后续玩家投票赞成或反对。当至少2人赞成时，投票通过，`fixedHands` 增加10，所有非旁观玩家自动准备并开始新一局。
+
+**参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `approve` | boolean | 是 | `true`=赞成延长，`false`=反对 |
+
+**请求示例（发起投票）**：
+```json
+{ "cmd": "vote-extend-hands", "args": { "approve": true } }
+```
+
+**响应示例（发起成功）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "initiated": true, "approve": true },
+  "log": "Vote extend hands initiated: approve"
+}
+```
+
+**响应示例（投票通过）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "approved": true, "newFixedHands": 13, "extendCount": 10 },
+  "log": "Vote approved! Fixed hands extended to 13"
+}
+```
+
+**响应示例（投票未通过）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "approved": false },
+  "log": "Vote rejected: not enough approvals"
+}
+```
+
+**响应示例（等待更多投票）**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "responded": true, "approve": true, "waitingForMore": true },
+  "log": "Vote recorded: approve. Waiting for more votes."
+}
+```
+
+**错误场景**：
+- `400` — 不在任何房间 / 房间未启用固定局数 / 固定局数未达上限 / 玩家不在房间中
+- `404` — 房间未找到
+
 ---
 
 ## 游戏变体一览
 
-| 变体ID | 名称 | 底牌数 | 公共牌数 | 牌桌数 | 下注类型 | 最大人数 |
-|--------|------|--------|----------|--------|----------|----------|
-| `texas_nlhe` | 常规德州 | 2 | 5 | 1 | 无限注 | 10 |
-| `texas_lhe` | 限注德州 | 2 | 5 | 1 | 固定限注 | 10 |
-| `texas_plo` | 底池限注德州 | 2 | 5 | 1 | 底池限注 | 10 |
-| `six_plus` | 短牌 | 2 | 5 | 1 | 无限注 | 10 |
-| `pineapple` | 菠萝 | 3 | 5 | 1 | 无限注 | 10 |
-| `crazy_pineapple` | 疯狂菠萝 | 3 | 5 | 1 | 无限注 | 10 |
-| `texas_double_board` | 双牌桌德州 | 2 | 5×2 | 2 | 无限注 | 10 |
-| `omaha_plo` | 奥马哈 | 4 | 5 | 1 | 底池限注 | 10 |
-| `omaha_hi_lo` | 奥马哈高低 | 4 | 5 | 1 | 底池限注 | 10 |
-| `omaha_plo5` | 五张奥马哈 | 5 | 5 | 1 | 底池限注 | 6 |
-| `omaha_plo6` | 六张奥马哈 | 6 | 5 | 1 | 底池限注 | 6 |
-| `omaha_double_board` | 双牌桌奥马哈 | 4 | 5×2 | 2 | 底池限注 | 10 |
-| `omaha_three_board` | 三牌桌奥马哈 | 4 | 5×3 | 3 | 底池限注 | 10 |
-| `five_card_draw` | 五张换牌 | 5 | 0 | 1 | 无限注 | 6 |
-| `seven_card_stud` | 七张梭哈 | 7 | 0 | 1 | 固定限注 | 8 |
-| `squid_holdem` | 鱿鱼德州 | 2 | 5 | 1 | 无限注 | 2 |
-| `squid_dalgona_suit` | 鱿鱼椪糖 | 2 | 5 | 1 | 无限注 | 2 |
-| `squid_glass_bridge` | 鱿鱼玻璃桥 | 2 | 5 | 1 | 无限注 | 2 |
+| 变体ID | 名称 | 底牌数 | 公共牌数 | 牌桌数 | 下注类型 | 最大人数 | 凑牌方式 |
+|--------|------|--------|----------|--------|----------|----------|----------|
+| `texas_nlhe` | 常规德州 | 2 | 5 | 1 | 无限注 | 10 | 自由组合 |
+| `texas_lhe` | 限注德州 | 2 | 5 | 1 | 固定限注 | 10 | 自由组合 |
+| `texas_plo` | 底池限注德州 | 2 | 5 | 1 | 底池限注 | 10 | 自由组合 |
+| `six_plus` | 短牌 | 2 | 5 | 1 | 无限注 | 10 | 自由组合 |
+| `pineapple` | 大菠萝 | 3 | 5 | 1 | 无限注 | 10 | 自由组合 |
+| `crazy_pineapple` | 疯狂菠萝 | 3 | 5 | 1 | 无限注 | 10 | 自由组合 |
+| `texas_double_board` | 双排面德州 | 2 | 5×2 | 2 | 无限注 | 10 | 自由组合 |
+| `omaha_plo` | 奥马哈 | 4 | 5 | 1 | 底池限注 | 10 | 强制2+3 |
+| `omaha_hi_lo` | 奥马哈高低 | 4 | 5 | 1 | 底池限注 | 10 | 强制2+3 |
+| `omaha_plo5` | 五张奥马哈 | 5 | 5 | 1 | 底池限注 | 10 | 强制2+3 |
+| `omaha_plo6` | 六张奥马哈 | 6 | 5 | 1 | 底池限注 | 10 | 强制2+3 |
+| `omaha_double_board` | 双排面奥马哈 | 4 | 5×2 | 2 | 底池限注 | 10 | 强制2+3 |
+| `omaha_three_board` | 三板面奥马哈 | 4 | 5×3 | 3 | 底池限注 | 10 | 强制2+3 |
+| `five_card_draw` | 五张换牌 | 5 | 0 | 0 | 无限注 | 6 | 自由组合 |
+| `seven_card_stud` | 七张梭哈 | 7 | 0 | 0 | 固定限注 | 8 | 自由组合 |
+| `squid_holdem` | 鱿鱼扣牌德州 | 2 | 5 | 1 | 无限注 | 2 | 自由组合 |
+| `squid_dalgona_suit` | 椪糖花色局 | 2 | 5 | 1 | 无限注 | 6 | 自由组合 |
+| `squid_glass_bridge` | 玻璃桥比牌局 | 2 | 5 | 1 | 无限注 | 8 | 自由组合 |
 
 ## 游戏修饰器一览
 
-| 修饰器ID | 名称 | 说明 |
-|----------|------|------|
-| `none` | 无 | 不使用特殊修饰 |
-| `bomb_pot` | 炸弹彩池 | 强制前注，翻前无弃牌/加注，全员进翻牌 |
-| `bomb_pot_double` | 翻倍炸弹池 | 同炸弹彩池，前注翻倍 |
-| `all_in_no_fold` | 免弃牌全员池 | 强制前注，翻前无弃牌 |
-| `all_in_all_round` | 跟到底 | 翻前全员全下，纯运气 |
-| `blind_showdown` | 大小盲梭哈 | 翻前仅弃牌或全下 |
+| 修饰器ID | 名称 | 图标 | 说明 | 需搭配变体 |
+|----------|------|------|------|-----------|
+| `none` | 无 | — | 不使用特殊修饰 | 否 |
+| `bomb_pot` | 炸弹彩池 | 💣 | 强制前注，翻前无弃牌/加注，全员进翻牌 | 是 |
+| `bomb_pot_double` | 翻倍炸弹池 | 💥 | 同炸弹彩池，前注翻倍 | 是 |
+| `all_in_no_fold` | 免弃牌全员池 | 🚫 | 强制前注，翻前无弃牌 | 是 |
+| `all_in_all_round` | 跟到底 | 🎰 | 翻前全员全下，纯运气 | 是 |
+| `blind_showdown` | 大小盲梭哈 | 👁️ | 翻前仅弃牌或全下 | 是 |
 
 ---
 
@@ -888,18 +1097,62 @@ AI 客户端除了主动发送指令外，还需要监听以下服务端推送�
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `winner` | object/null | 最终胜利者，所有玩家均破产时为 `null` |
-| `winner.id` | string | 胜利者玩家ID |
-| `winner.name` | string | 胜利者名称 |
-| `winner.chips` | number | 胜利者最终筹码 |
+### `game:action_result` — 玩家行动结果
 
-> 收到此事件后，AI 应调用 `leave-room` 退出房间。
+当房间内任何玩家执行行动后触发。
+
+**事件数据**：
+```json
+{
+  "playerId": "ai_xxx",
+  "playerName": "AI_Player",
+  "action": "call",
+  "amount": null,
+  "gameState": { /* 游戏状态（不含底牌） */ },
+  "room": { /* 房间状态 */ }
+}
+```
+
+### `game:player_turn` — 轮到玩家行动
+
+**事件数据**：
+```json
+{
+  "playerId": "ai_xxx",
+  "playerName": "AI_Player",
+  "timeout": 30,
+  "validActions": ["fold", "call", "raise", "all-in"]
+}
+```
+
+### `game:showdown` — 摊牌
+
+**事件数据**：
+```json
+{
+  "winners": [{ "playerId": "ai_xxx", "playerName": "AI_Player", "winAmount": 60, "handDescription": "One Pair" }],
+  "potResults": [],
+  "allHands": [...],
+  "communityCards": [...],
+  "gameState": { /* 最终游戏状态 */ },
+  "room": { /* 房间状态 */ }
+}
+```
+
+### `game:hand_result` — 单局结果
+
+**事件数据**：
+```json
+{
+  "winners": [{ "playerId": "ai_xxx", "playerName": "AI_Player", "winAmount": 60 }],
+  "potResults": [],
+  "allHands": [...],
+  "communityCards": [...],
+  "room": { /* 房间状态 */ }
+}
+```
 
 ### `system:chips_received` — 筹码补充通知
-
-当房间内任何玩家补充筹码时触发。
 
 **事件数据**：
 ```json
@@ -907,6 +1160,60 @@ AI 客户端除了主动发送指令外，还需要监听以下服务端推送�
   "playerId": "player_xxx",
   "amount": 1000,
   "room": { /* 房间状态 */ }
+}
+```
+
+### `room:player_joined` — 玩家加入房间
+
+**事件数据**：
+```json
+{
+  "player": { "id": "ai_xxx", "name": "PokerBot", "chips": 1000 },
+  "room": { /* 房间状态 */ }
+}
+```
+
+### `room:player_left` — 玩家离开房间
+
+**事件数据**：
+```json
+{
+  "playerId": "ai_xxx",
+  "room": { /* 房间状态 */ }
+}
+```
+
+### `room:player_ready_changed` — 玩家准备状态变更
+
+**事件数据**：
+```json
+{
+  "playerId": "ai_xxx",
+  "ready": true,
+  "room": { /* 房间状态 */ }
+}
+```
+
+### `room:updated` — 房间信息更新
+
+**事件数据**：
+```json
+{
+  "type": "created | updated | deleted",
+  "roomId": "XYZ789",
+  "room": { /* 房间状态 */ }
+}
+```
+
+### `chat:message` — 聊天消息
+
+**事件数据**：
+```json
+{
+  "playerId": "ai_xxx",
+  "playerName": "AI_Player",
+  "message": "Nice hand!",
+  "timestamp": 1709123456789
 }
 ```
 
@@ -918,96 +1225,32 @@ AI 客户端除了主动发送指令外，还需要监听以下服务端推送�
 
 ```
 1. 连接 ws://localhost:3000/ai
-   ← ai:connected { playerId: "ai_xxx", commands: [...] }
-
 2. → create-room { name: "AI Arena", variant: "texas_nlhe" }
-   ← { ok: true, data: { roomId: "ABC123" } }
-
 3. → ready { ready: true }
-   ← { ok: true, data: { ready: true } }
-
 4. (等待其他玩家加入)
-
 5. → start-game
-   ← { ok: true, log: "Game started!" }
-
-6. → get-state
-   ← { ok: true, data: { isMyTurn: true, myCards: [...], validActions: [...] } }
-
-7. → get-actions
-   ← { ok: true, data: { validActions: ["fold","call","raise","all-in"], toCall: 10 } }
-
-8. → action { action: "call" }
-   ← { ok: true, data: { action: "call", phase: "pre-flop" } }
-
-9. (重复 6-8 直到牌局结束)
-
-10. → leave-room
-    ← { ok: true, log: "Left room: ABC123" }
+6. → get-state → { isMyTurn: true, myCards: [...], validActions: [...] }
+7. → action { action: "call" }
+8. (重复 6-7 直到牌局结束)
+9. → leave-room
 ```
 
-### 流程二：加入已有房间
+### 流程二：破产补筹码
 
 ```
-1. 连接 ws://localhost:3000/ai
-
-2. → list-rooms
-   ← { ok: true, data: { rooms: [{ roomId: "ABC123", status: "waiting" }] } }
-
-3. → join-room { roomId: "ABC123", name: "PokerBot" }
-   ← { ok: true, data: { roomId: "ABC123" } }
-
-4. → ready { ready: true }
-   ← { ok: true }
-
-5. (等待房主开始游戏或自动开始)
-
-6. → get-state  (轮询游戏状态)
-   ← { ok: true, data: { isMyTurn: true/false, ... } }
-
-7. 当 isMyTurn=true 时:
-   → get-actions
-   ← { ok: true, data: { validActions: [...], toCall: N } }
-   → action { action: "check" / "call" / "raise" / "fold" }
+1. (筹码归零，状态变为 BUSTED)
+2. → get-chips → { amount: 1000 }
+3. (自动 ready，等待其他玩家准备后游戏自动开始)
 ```
 
 ### 流程三：AI 自动对局（推荐轮询模式）
 
 ```python
-import socketio
-
-sio = socketio.Client()
-AI_NS = '/ai'
-
-@sio.on('ai:connected', namespace=AI_NS)
-def on_connected(data):
-    player_id = data['data']['playerId']
-    print(f"Connected as {player_id}")
-
-sio.connect('http://localhost:3000', namespaces=[AI_NS])
-
-def send_cmd(cmd, args=None):
-    result = {}
-    sio.emit('ai:cmd', {'cmd': cmd, 'args': args or {}},
-             namespace=AI_NS, callback=lambda d: result.update(d))
-    deadline = time.time() + 5
-    while not result and time.time() < deadline:
-        sio.sleep(0.05)
-    return result
-
-# 创建/加入房间
-send_cmd('create-room', {'name': 'AI Room', 'variant': 'texas_nlhe'})
-send_cmd('ready', {'ready': True})
-send_cmd('start-game')
-
-# 自动对局循环
 while True:
     state = send_cmd('get-state')
-    if not state.get('ok'):
-        break
+    if not state.get('ok'): break
     data = state.get('data', {})
-    if data.get('phase') in ('waiting', 'ended', 'showdown'):
-        break
+    if data.get('phase') in ('waiting', 'ended', 'showdown'): break
     if data.get('isMyTurn'):
         actions = send_cmd('get-actions')
         valid = actions.get('data', {}).get('validActions', [])
@@ -1018,9 +1261,6 @@ while True:
         else:
             send_cmd('action', {'action': 'fold'})
     time.sleep(0.3)
-
-send_cmd('leave-room')
-sio.disconnect()
 ```
 
 ---
@@ -1039,11 +1279,12 @@ AI 客户端断开连接时：
 1. **回合判断**：使用 `get-state` 返回的 `isMyTurn` 字段判断是否轮到你行动，而非依赖事件推送
 2. **行动验证**：执行 `action` 前建议先调用 `get-actions` 确认可用行动列表，避免因无效行动返回错误
 3. **牌局中无法离开**：游戏进行中调用 `leave-room` 会返回错误，需等待本局结束
-4. **筹码耗尽**：筹码为0时可调用 `get-chips` 补充筹码
+4. **筹码耗尽**：筹码为0时状态变为 BUSTED，可调用 `get-chips` 补充筹码（自动 ready）
 5. **变体人数上限**：不同变体有不同的最大人数限制（如鱿鱼系列最多2人），`create-room` 的 `maxPlayers` 会被自动截断
 6. **首局需手动开始**：第一局需要房主调用 `start-game`，后续局所有玩家准备后自动开始
 7. **房主自动准备**：房主调用 `start-game` 时如果未准备，会自动设为准备状态
-8. **Heads-up 行动顺序**：当场上只剩2名活跃玩家时（如第三人破产观战），进入 heads-up 模式，行动顺序与多人局不同：
+8. **补筹码 = 已准备**：破产玩家调用 `get-chips` 补筹码后自动设为 `isReady = true`，无需再调用 `ready`
+9. **Heads-up 行动顺序**：当场上只剩2名活跃玩家时，进入 heads-up 模式：
    - **Preflop**：Dealer（小盲）先行动 → 大盲后行动
    - **Flop / Turn / River**：大盲先行动 → Dealer 后行动
-   - 因此大盲玩家会在 preflop 末尾和 flop 开头**连续行动两次**，这是正常规则，不是 bug
+10. **大菠萝弃牌阶段**：`pineapple` 变体中，发牌后进入 `discard` 阶段，玩家必须弃掉1张底牌。此时 `validActions` 中包含 `discard`，需要通过 `action { action: "discard", amount: <索引> }` 执行

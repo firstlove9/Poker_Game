@@ -16,6 +16,9 @@ export enum AICommand {
   LIST_MODIFIERS = 'list-modifiers',
   RULES = 'rules',
   WHOAMI = 'whoami',
+  RUN_IT_TWICE_CHOICE = 'run-it-twice-choice',
+  ROLL_DICE = 'roll-dice',
+  VOTE_EXTEND_HANDS = 'vote-extend-hands',
 }
 
 export interface AICommandDefinition {
@@ -73,8 +76,10 @@ export const AI_COMMAND_REGISTRY: Record<AICommand, AICommandDefinition> = {
       { name: 'password', type: 'string', required: false, description: 'Room password (optional)' },
       { name: 'smallBlind', type: 'number', required: false, description: 'Small blind amount', default: 10 },
       { name: 'bigBlind', type: 'number', required: false, description: 'Big blind amount', default: 20 },
+      { name: 'fixedHands', type: 'number', required: false, description: 'Fixed hands count (min 3, 0 = unlimited)', default: 0 },
+      { name: 'maxRebuyCount', type: 'number', required: false, description: 'Max rebuy count (-1 = unlimited, 0 = no rebuy)', default: 3 },
     ],
-    examples: ['create-room', 'create-room --name "My Room" --variant texas_plo', 'create-room --maxPlayers 6 --variant squid_holdem'],
+    examples: ['create-room', 'create-room --name "My Room" --variant texas_plo', 'create-room --maxPlayers 6 --variant squid_holdem --fixedHands 10'],
   },
   [AICommand.JOIN_ROOM]: {
     name: AICommand.JOIN_ROOM,
@@ -172,6 +177,28 @@ export const AI_COMMAND_REGISTRY: Record<AICommand, AICommandDefinition> = {
     description: 'Show your player ID, name, current room, and status',
     params: [],
     examples: ['whoami'],
+  },
+  [AICommand.RUN_IT_TWICE_CHOICE]: {
+    name: AICommand.RUN_IT_TWICE_CHOICE,
+    description: 'Choose whether to run it once or twice when heads-up all-in',
+    params: [
+      { name: 'choice', type: 'string', required: true, description: 'Run it once or twice', enum: ['once', 'twice'] },
+    ],
+    examples: ['run-it-twice-choice --choice once', 'run-it-twice-choice --choice twice'],
+  },
+  [AICommand.ROLL_DICE]: {
+    name: AICommand.ROLL_DICE,
+    description: 'Roll dice to determine run-it-twice order (when both players choose twice)',
+    params: [],
+    examples: ['roll-dice'],
+  },
+  [AICommand.VOTE_EXTEND_HANDS]: {
+    name: AICommand.VOTE_EXTEND_HANDS,
+    description: 'Vote to extend fixed hands by 10 (initiate or respond to vote)',
+    params: [
+      { name: 'approve', type: 'boolean', required: true, description: 'Approve extending hands (true=yes, false=no)' },
+    ],
+    examples: ['vote-extend-hands --approve true', 'vote-extend-hands --approve false'],
   },
 };
 

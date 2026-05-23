@@ -711,12 +711,20 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
         const extendCount = room.voteExtendHands.extendCount;
         room.voteExtendHands = undefined;
 
+        for (const p of room.players) {
+          if (p.playerRoomRole !== PlayerRoomRole.SPECTATOR && p.chips > 0 && p.isOnline && !p.isAfk) {
+            p.isReady = true;
+          }
+        }
+
         io.to(roomId).emit(ServerEvents.VOTE_EXTEND_HANDS_ENDED, {
           approved: true,
           newFixedHands: room.config.fixedHands,
           extendCount,
           room: sanitizeRoom(room),
         });
+
+        tryStartGame(roomId, roomManager, io);
       } else if (rejectCount >= 1 && (eligiblePlayers.length - rejectCount) < 2) {
         room.voteExtendHands = undefined;
 
@@ -730,12 +738,20 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
           const extendCount = room.voteExtendHands.extendCount;
           room.voteExtendHands = undefined;
 
+          for (const p of room.players) {
+            if (p.playerRoomRole !== PlayerRoomRole.SPECTATOR && p.chips > 0 && p.isOnline && !p.isAfk) {
+              p.isReady = true;
+            }
+          }
+
           io.to(roomId).emit(ServerEvents.VOTE_EXTEND_HANDS_ENDED, {
             approved: true,
             newFixedHands: room.config.fixedHands,
             extendCount,
             room: sanitizeRoom(room),
           });
+
+          tryStartGame(roomId, roomManager, io);
         } else {
           room.voteExtendHands = undefined;
 

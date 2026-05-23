@@ -15,7 +15,7 @@ function safeCallback(callback: any, response: any): void {
   }
 }
 
-function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: any[], potResults: any[], allHands: any[], finalGameState: any, io: any, roomManager: RoomManager, preRunItTwiceCommunityCards?: any[]): void {
+export function finishHand(roomId: string, room: any, gameEngine: GameEngine, winners: any[], potResults: any[], allHands: any[], finalGameState: any, io: any, roomManager: RoomManager, preRunItTwiceCommunityCards?: any[]): void {
   const mergedWinners = (() => {
     const map = new Map<string, any>();
     for (const w of winners) {
