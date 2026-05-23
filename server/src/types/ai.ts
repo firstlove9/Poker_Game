@@ -19,6 +19,8 @@ export enum AICommand {
   RUN_IT_TWICE_CHOICE = 'run-it-twice-choice',
   ROLL_DICE = 'roll-dice',
   VOTE_EXTEND_HANDS = 'vote-extend-hands',
+  DRAW = 'draw',
+  SHOW_CARDS = 'show-cards',
 }
 
 export interface AICommandDefinition {
@@ -199,6 +201,20 @@ export const AI_COMMAND_REGISTRY: Record<AICommand, AICommandDefinition> = {
       { name: 'approve', type: 'boolean', required: true, description: 'Approve extending hands (true=yes, false=no)' },
     ],
     examples: ['vote-extend-hands --approve true', 'vote-extend-hands --approve false'],
+  },
+  [AICommand.DRAW]: {
+    name: AICommand.DRAW,
+    description: 'Draw cards: replace selected hole cards (Five Card Draw variant)',
+    params: [
+      { name: 'indices', type: 'string', required: true, description: 'Indices of cards to replace (0-based), e.g. "0,2,4" or "none" to keep all' },
+    ],
+    examples: ['draw --indices 0,2,4', 'draw --indices none'],
+  },
+  [AICommand.SHOW_CARDS]: {
+    name: AICommand.SHOW_CARDS,
+    description: 'Show/hole cards at showdown (Omaha variants)',
+    params: [],
+    examples: ['show-cards'],
   },
 };
 

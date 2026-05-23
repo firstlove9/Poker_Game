@@ -48,6 +48,7 @@ export class GameEngine {
   private actionCount: number = 0;
   private playerInitialChips: Map<string, number> = new Map();
   private playerRebuyAmounts: Map<string, number> = new Map();
+  private targetSuit: string | null = null;
 
   constructor(players: RoomPlayer[], dealerIndex: number, config: GameConfig) {
     this.players = players.filter(p => p.isReady && p.chips > 0);
@@ -136,14 +137,21 @@ export class GameEngine {
 
     this.initPlayerRoles();
     this.dealHoleCards();
-    this.postBlinds();
 
-    const isPineapple = this.config.variant === GameVariant.PINEAPPLE;
-    if (isPineapple) {
-      this.state.phase = GamePhase.DISCARD;
-      this.state.currentPlayerIndex = this.state.dealerIndex;
-      this.state.currentPlayerId = this.players[this.state.dealerIndex]?.id || '';
+    if (this.config.variant === GameVariant.SQUID_DALGONA_SUIT) {
+      const suits = ['hearts', 'diamonds', 'clubs', 'spades'];
+      this.targetSuit = suits[Math.floor(Math.random() * suits.length)];
+      this.state.targetSuit = this.targetSuit;
     } else {
+      this.targetSuit = null;
+    }
+
+    const isFiveCardDraw = this.config.variant === GameVariant.FIVE_CARD_DRAW;
+    const isSevenCardStud = this.config.variant === GameVariant.SEVEN_CARD_STUD;
+
+    if (isFiveCardDraw) {
+      this.postAntes();
+      this.state.phase = GamePhase.PRE_FLOP;
       const isHeadsUp = this.players.length === 2;
       if (isHeadsUp) {
         this.state.currentPlayerIndex = this.state.smallBlindIndex;
@@ -151,6 +159,55 @@ export class GameEngine {
         this.state.currentPlayerIndex = this.getNextActivePlayerIndex(this.state.bigBlindIndex);
       }
       this.state.currentPlayerId = this.players[this.state.currentPlayerIndex]?.id || '';
+    } else if (isSevenCardStud) {
+      this.postAntes();
+      this.state.phase = GamePhase.PRE_FLOP;
+      this.state.currentPlayerIndex = this.state.dealerIndex;
+      this.state.currentPlayerId = this.players[this.state.dealerIndex]?.id || '';
+    } else {
+      this.postBlinds();
+    }
+
+    const isPineapple = this.config.variant === GameVariant.PINEAPPLE;
+    if (isPineapple) {
+      this.state.phase = GamePhase.DISCARD;
+      this.state.currentPlayerIndex = this.state.dealerIndex;
+      this.state.currentPlayerId = this.players[this.state.dealerIndex]?.id || '';
+    } else {
+      const modifier = this.config.modifier || GameModifier.NONE;
+      const isBombPot = modifier === GameModifier.BOMB_POT ||
+                        modifier === GameModifier.BOMB_POT_DOUBLE ||
+                        modifier === GameModifier.ALL_IN_NO_FOLD;
+      const isAllInAllRound = modifier === GameModifier.ALL_IN_ALL_ROUND;
+
+      if (isAllInAllRound) {
+        for (const player of this.players) {
+          if (this.state.playerStatus[player.id] === PlayerStatus.PLAYING && player.chips > 0) {
+            const allInAmount = player.chips;
+            player.chips = 0;
+            this.state.roundBets[player.id] = (this.state.roundBets[player.id] || 0) + allInAmount;
+            this.state.totalBets[player.id] = (this.state.totalBets[player.id] || 0) + allInAmount;
+            this.state.playerStatus[player.id] = PlayerStatus.ALL_IN;
+          }
+        }
+        this.state.totalPot = this.calcTotalPot();
+        this.dealRemainingCommunityCards();
+        this.endHand();
+        return this.state;
+      }
+
+      if (isBombPot) {
+        this.state.currentPlayerIndex = this.getNextActivePlayerIndex(this.state.dealerIndex);
+        this.state.currentPlayerId = this.players[this.state.currentPlayerIndex]?.id || '';
+      } else {
+        const isHeadsUp = this.players.length === 2;
+        if (isHeadsUp) {
+          this.state.currentPlayerIndex = this.state.smallBlindIndex;
+        } else {
+          this.state.currentPlayerIndex = this.getNextActivePlayerIndex(this.state.bigBlindIndex);
+        }
+        this.state.currentPlayerId = this.players[this.state.currentPlayerIndex]?.id || '';
+      }
     }
 
     return this.state;
@@ -181,6 +238,35 @@ export class GameEngine {
 
   private postBlinds(): void {
     const n = this.players.length;
+    const modifier = this.config.modifier || GameModifier.NONE;
+    const isBombPot = modifier === GameModifier.BOMB_POT ||
+                      modifier === GameModifier.BOMB_POT_DOUBLE ||
+                      modifier === GameModifier.ALL_IN_NO_FOLD ||
+                      modifier === GameModifier.ALL_IN_ALL_ROUND;
+
+    if (isBombPot) {
+      let anteAmount = this.config.bigBlind;
+      if (modifier === GameModifier.BOMB_POT_DOUBLE) {
+        anteAmount = this.config.bigBlind * 2;
+      }
+
+      for (const player of this.players) {
+        const amount = Math.min(anteAmount, player.chips);
+        player.chips -= amount;
+        this.state.roundBets[player.id] = amount;
+        this.state.totalBets[player.id] = amount;
+        if (player.chips === 0) {
+          this.state.playerStatus[player.id] = PlayerStatus.ALL_IN;
+        }
+      }
+
+      this.state.currentBet = anteAmount;
+      this.state.minRaise = this.config.bigBlind;
+      this.lastAggressorIndex = -1;
+      this.state.totalPot = this.calcTotalPot();
+      return;
+    }
+
     const sb = this.players[this.state.smallBlindIndex % n];
     const bb = this.players[this.state.bigBlindIndex % n];
 
@@ -210,6 +296,25 @@ export class GameEngine {
     this.state.totalPot = this.calcTotalPot();
   }
 
+  private postAntes(): void {
+    const anteAmount = this.config.smallBlind;
+    for (const player of this.players) {
+      if (this.state.playerStatus[player.id] === PlayerStatus.PLAYING) {
+        const amount = Math.min(anteAmount, player.chips);
+        player.chips -= amount;
+        this.state.roundBets[player.id] = amount;
+        this.state.totalBets[player.id] = amount;
+        if (player.chips === 0) {
+          this.state.playerStatus[player.id] = PlayerStatus.ALL_IN;
+        }
+      }
+    }
+    this.state.currentBet = anteAmount;
+    this.state.minRaise = this.config.bigBlind;
+    this.lastAggressorIndex = -1;
+    this.state.totalPot = this.calcTotalPot();
+  }
+
   private getNextActivePlayerIndex(fromIndex: number): number {
     const n = this.players.length;
     let index = (fromIndex + 1) % n;
@@ -233,6 +338,10 @@ export class GameEngine {
   performAction(playerId: string, action: PlayerAction, amount?: number): { success: boolean; error?: string } {
     if (this.state.phase === GamePhase.DISCARD) {
       return { success: false, error: '弃牌阶段请先弃掉一张手牌' };
+    }
+
+    if (this.state.phase === GamePhase.DRAW) {
+      return { success: false, error: '换牌阶段请使用draw命令换牌' };
     }
 
     const playerIndex = this.players.findIndex(p => p.id === playerId);
@@ -277,15 +386,18 @@ export class GameEngine {
       }
 
       case PlayerAction.RAISE: {
-        if (!amount || amount <= 0) {
-          return { success: false, error: '加注金额必须大于0' };
-        }
-        let raiseAmount = amount;
-        if (this.variantRules.isPotLimit) {
+        let raiseAmount = amount || 0;
+        if (this.variantRules.isFixedLimit) {
+          const isEarlyRound = this.state.phase === GamePhase.PRE_FLOP || this.state.phase === GamePhase.FLOP;
+          raiseAmount = isEarlyRound ? this.config.bigBlind : this.config.bigBlind * 2;
+        } else if (this.variantRules.isPotLimit) {
           const maxRaise = this.getPotLimitRaise();
           if (raiseAmount > maxRaise) {
             raiseAmount = maxRaise;
           }
+        }
+        if (raiseAmount <= 0) {
+          return { success: false, error: '加注金额必须大于0' };
         }
         const totalRaiseAmount = raiseAmount;
         const callPlusRaise = toCall + totalRaiseAmount;
@@ -355,6 +467,92 @@ export class GameEngine {
     }
 
     return { success: true };
+  }
+
+  drawCards(playerId: string, cardIndices: number[]): { success: boolean; error?: string; newCards?: Card[] } {
+    if (this.state.phase !== GamePhase.DRAW) {
+      return { success: false, error: '当前不是换牌阶段' };
+    }
+
+    const playerIndex = this.players.findIndex(p => p.id === playerId);
+    if (playerIndex === -1) {
+      return { success: false, error: '玩家不存在' };
+    }
+
+    if (playerIndex !== this.state.currentPlayerIndex) {
+      return { success: false, error: '不是你的回合' };
+    }
+
+    const cards = this.state.playerCards[playerId];
+    if (!cards) {
+      return { success: false, error: '无手牌' };
+    }
+
+    if (cardIndices.length > cards.length) {
+      return { success: false, error: '换牌数量不能超过手牌数' };
+    }
+
+    for (const idx of cardIndices) {
+      if (idx < 0 || idx >= cards.length) {
+        return { success: false, error: `无效的卡牌索引: ${idx}` };
+      }
+    }
+
+    const sortedIndices = [...cardIndices].sort((a, b) => b - a);
+    for (const idx of sortedIndices) {
+      cards.splice(idx, 1);
+    }
+
+    const newCards: Card[] = [];
+    for (let i = 0; i < cardIndices.length; i++) {
+      const card = this.deck.deal();
+      cards.push(card);
+      newCards.push(card);
+    }
+
+    this.state.actions.push({
+      playerId,
+      playerName: this.players[playerIndex].name,
+      action: 'draw',
+      amount: cardIndices.length,
+      timestamp: Date.now(),
+      phase: this.state.phase,
+    });
+
+    const allDrew = this.players.every(p => {
+      const action = this.state.actions.find(a =>
+        a.playerId === p.id && a.action === 'draw' && a.phase === GamePhase.DRAW
+      );
+      return !!action || this.state.playerStatus[p.id] !== PlayerStatus.PLAYING;
+    });
+
+    if (allDrew) {
+      this.state.phase = GamePhase.POST_DRAW;
+      const nextIndex = this.getNextActivePlayerIndex(this.state.dealerIndex);
+      if (nextIndex === -1) {
+        this.endHand();
+      } else {
+        this.state.currentPlayerIndex = nextIndex;
+        this.state.currentPlayerId = this.players[nextIndex]?.id || '';
+      }
+    } else {
+      const nextIndex = this.getNextActivePlayerIndex(playerIndex);
+      if (nextIndex === -1) {
+        this.state.phase = GamePhase.POST_DRAW;
+        const postDrawIndex = this.getNextActivePlayerIndex(this.state.dealerIndex);
+        if (postDrawIndex === -1) {
+          this.endHand();
+        } else {
+          this.state.currentPlayerIndex = postDrawIndex;
+          this.state.currentPlayerId = this.players[postDrawIndex]?.id || '';
+        }
+      } else {
+        this.state.currentPlayerIndex = nextIndex;
+        this.state.currentPlayerId = this.players[nextIndex]?.id || '';
+      }
+    }
+
+    return { success: true, newCards };
   }
 
   private checkHeadsUpAllIn(): boolean {
@@ -855,7 +1053,14 @@ export class GameEngine {
     const isMultiBoard = boardCount > 1;
 
     switch (this.state.phase) {
-      case GamePhase.PRE_FLOP:
+      case GamePhase.PRE_FLOP: {
+        const isFiveCardDraw = this.config.variant === GameVariant.FIVE_CARD_DRAW;
+        if (isFiveCardDraw) {
+          this.state.phase = GamePhase.DRAW;
+          this.state.currentPlayerIndex = this.state.dealerIndex;
+          this.state.currentPlayerId = this.players[this.state.dealerIndex]?.id || '';
+          return;
+        }
         this.state.phase = GamePhase.FLOP;
         if (isMultiBoard) {
           for (let b = 0; b < boardCount; b++) {
@@ -868,6 +1073,26 @@ export class GameEngine {
           this.state.communityCards.push(this.deck.deal(), this.deck.deal(), this.deck.deal());
         }
         break;
+      }
+      case GamePhase.DRAW:
+        this.state.phase = GamePhase.POST_DRAW;
+        this.state.currentBet = 0;
+        this.state.roundBets = {};
+        this.hasActedThisRound = new Set();
+        this.lastAggressorIndex = -1;
+        {
+          const nextIndex = this.getNextActivePlayerIndex(this.state.dealerIndex);
+          if (nextIndex === -1) {
+            this.endHand();
+            return;
+          }
+          this.state.currentPlayerIndex = nextIndex;
+          this.state.currentPlayerId = this.players[nextIndex]?.id || '';
+        }
+        return;
+      case GamePhase.POST_DRAW:
+        this.endHand();
+        return;
       case GamePhase.FLOP:
         this.state.phase = GamePhase.TURN;
         if (isMultiBoard) {
@@ -1050,17 +1275,28 @@ export class GameEngine {
       return;
     }
 
-    const playerHands: Map<string, { hand: HandEvaluation; cards: Card[] }> = new Map();
+    const playerHands: Map<string, { hand: HandEvaluation; cards: Card[]; suitValid?: boolean }> = new Map();
+    const playerLowHands: Map<string, { qualifies: boolean; value: number; description: string }> = new Map();
+    const isHiLo = (this.config.variant || GameVariant.TEXAS_NLHE) === GameVariant.OMAHA_HI_LO;
+
+    const noCommunityCards = this.config.variant === GameVariant.FIVE_CARD_DRAW ||
+                              this.config.variant === GameVariant.SEVEN_CARD_STUD;
 
     for (const player of activePlayers) {
       const holeCards = this.state.playerCards[player.id];
       const communityCards = this.state.communityCards;
 
-      if (holeCards && communityCards.length >= 3) {
+      if (holeCards && (noCommunityCards || communityCards.length >= 3)) {
         let hand: HandEvaluation;
         const variant = this.config.variant || GameVariant.TEXAS_NLHE;
         const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD, GameVariant.OMAHA_THREE_BOARD];
-        if (omahaVariants.includes(variant)) {
+        if (noCommunityCards) {
+          hand = HandEvaluator.evaluate(holeCards, this.variantRules.handRankOrder, this.isShortDeck);
+        } else if (isHiLo) {
+          const hiLoResult = HandEvaluator.evaluateOmahaHiLo(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
+          hand = hiLoResult.high;
+          playerLowHands.set(player.id, hiLoResult.low);
+        } else if (omahaVariants.includes(variant)) {
           hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
         } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
           hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
@@ -1068,9 +1304,16 @@ export class GameEngine {
           const allCards = [...holeCards, ...communityCards];
           hand = HandEvaluator.evaluate(allCards, this.variantRules.handRankOrder, this.isShortDeck);
         }
-        playerHands.set(player.id, { hand, cards: [...holeCards, ...communityCards] });
+        const isDalgonaSuit = this.config.variant === GameVariant.SQUID_DALGONA_SUIT && this.targetSuit;
+        let suitValid = true;
+        if (isDalgonaSuit && hand.cards) {
+          suitValid = hand.cards.some((c: Card) => c.suit === this.targetSuit);
+        }
+        playerHands.set(player.id, { hand, cards: [...holeCards, ...communityCards], suitValid });
       }
     }
+
+    const isDalgonaSuitGame = this.config.variant === GameVariant.SQUID_DALGONA_SUIT;
 
     for (const pot of this.state.pots) {
       const eligiblePlayers = activePlayers.filter(p =>
@@ -1079,10 +1322,26 @@ export class GameEngine {
 
       if (eligiblePlayers.length === 0) continue;
 
+      let validPlayers = eligiblePlayers;
+      if (isDalgonaSuitGame) {
+        validPlayers = eligiblePlayers.filter(p => {
+          const hd = playerHands.get(p.id);
+          return hd && hd.suitValid !== false;
+        });
+
+        if (validPlayers.length === 0) {
+          const dealer = this.players.find(p => p.id === this.players[this.state.dealerIndex]?.id);
+          if (dealer) {
+            dealer.chips += pot.amount;
+          }
+          continue;
+        }
+      }
+
       let bestHand: HandEvaluation | null = null;
       let potWinnerIds: string[] = [];
 
-      for (const player of eligiblePlayers) {
+      for (const player of validPlayers) {
         const handData = playerHands.get(player.id);
         if (!handData) continue;
         const hand = handData.hand;
@@ -1095,13 +1354,64 @@ export class GameEngine {
         }
       }
 
-      const splitAmount = Math.floor(pot.amount / potWinnerIds.length);
-      const remainder = pot.amount - splitAmount * potWinnerIds.length;
+      if (isHiLo) {
+        let lowWinnerIds: string[] = [];
+        let bestLowValue = Infinity;
+        let anyLowQualifies = false;
 
-      for (let i = 0; i < potWinnerIds.length; i++) {
-        const winner = this.players.find(p => p.id === potWinnerIds[i]);
-        if (winner) {
-          winner.chips += splitAmount + (i === 0 ? remainder : 0);
+        for (const player of eligiblePlayers) {
+          const low = playerLowHands.get(player.id);
+          if (low && low.qualifies) {
+            anyLowQualifies = true;
+            if (low.value < bestLowValue) {
+              bestLowValue = low.value;
+              lowWinnerIds = [player.id];
+            } else if (low.value === bestLowValue) {
+              lowWinnerIds.push(player.id);
+            }
+          }
+        }
+
+        if (anyLowQualifies) {
+          const halfPot = Math.floor(pot.amount / 2);
+          const highHalf = pot.amount - halfPot;
+
+          const highSplit = Math.floor(highHalf / potWinnerIds.length);
+          const highRemainder = highHalf - highSplit * potWinnerIds.length;
+          for (let i = 0; i < potWinnerIds.length; i++) {
+            const winner = this.players.find(p => p.id === potWinnerIds[i]);
+            if (winner) {
+              winner.chips += highSplit + (i === 0 ? highRemainder : 0);
+            }
+          }
+
+          const lowSplit = Math.floor(halfPot / lowWinnerIds.length);
+          const lowRemainder = halfPot - lowSplit * lowWinnerIds.length;
+          for (let i = 0; i < lowWinnerIds.length; i++) {
+            const winner = this.players.find(p => p.id === lowWinnerIds[i]);
+            if (winner) {
+              winner.chips += lowSplit + (i === 0 ? lowRemainder : 0);
+            }
+          }
+        } else {
+          const splitAmount = Math.floor(pot.amount / potWinnerIds.length);
+          const remainder = pot.amount - splitAmount * potWinnerIds.length;
+          for (let i = 0; i < potWinnerIds.length; i++) {
+            const winner = this.players.find(p => p.id === potWinnerIds[i]);
+            if (winner) {
+              winner.chips += splitAmount + (i === 0 ? remainder : 0);
+            }
+          }
+        }
+      } else {
+        const splitAmount = Math.floor(pot.amount / potWinnerIds.length);
+        const remainder = pot.amount - splitAmount * potWinnerIds.length;
+
+        for (let i = 0; i < potWinnerIds.length; i++) {
+          const winner = this.players.find(p => p.id === potWinnerIds[i]);
+          if (winner) {
+            winner.chips += splitAmount + (i === 0 ? remainder : 0);
+          }
         }
       }
     }
@@ -1248,12 +1558,16 @@ export class GameEngine {
     for (const player of activePlayers) {
       const holeCards = this.state.playerCards[player.id];
       const communityCards = this.state.communityCards;
+      const noCommunityCards = this.config.variant === GameVariant.FIVE_CARD_DRAW ||
+                                this.config.variant === GameVariant.SEVEN_CARD_STUD;
 
-      if (holeCards && communityCards.length >= 3) {
+      if (holeCards && (noCommunityCards || communityCards.length >= 3)) {
         let hand: HandEvaluation;
         const variant = this.config.variant || GameVariant.TEXAS_NLHE;
         const omahaVariants = [GameVariant.OMAHA_PLO, GameVariant.OMAHA_HI_LO, GameVariant.OMAHA_PLO5, GameVariant.OMAHA_PLO6, GameVariant.OMAHA_DOUBLE_BOARD, GameVariant.OMAHA_THREE_BOARD];
-        if (omahaVariants.includes(variant)) {
+        if (noCommunityCards) {
+          hand = HandEvaluator.evaluate(holeCards, this.variantRules.handRankOrder, this.isShortDeck);
+        } else if (omahaVariants.includes(variant)) {
           hand = HandEvaluator.evaluateOmaha(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
         } else if (variant === GameVariant.CRAZY_PINEAPPLE) {
           hand = HandEvaluator.evaluateCrazyPineapple(holeCards, communityCards, this.variantRules.handRankOrder, this.isShortDeck);
@@ -1703,6 +2017,10 @@ export class GameEngine {
         return ['discard'];
       }
       return [];
+    }
+
+    if (this.state.phase === GamePhase.DRAW) {
+      return ['draw'];
     }
 
     const myBet = this.state.roundBets[playerId] || 0;

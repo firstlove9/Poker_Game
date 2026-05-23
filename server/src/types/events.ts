@@ -19,6 +19,7 @@ export enum ClientEvents {
   SHOW_CARDS = 'game:show_cards',
   DISCARD_CARD = 'game:discard_card',
   REQUEST_MY_CARDS = 'game:request_my_cards',
+  DRAW_CARDS = 'game:draw_cards',
 }
 
 // 服务端 → 客户端 事件

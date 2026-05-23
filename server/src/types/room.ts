@@ -166,6 +166,7 @@ export interface GameState {
     runItTwiceResults: RunItTwiceRoundResult[];
   } | null;
   showedCardsPlayers?: string[];
+  targetSuit?: string | null;
 }
 
 export interface Pot {

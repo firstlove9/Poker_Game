@@ -451,6 +451,67 @@ export class HandEvaluator {
     }
   }
 
+  static evaluateLow(cards: Card[]): { qualifies: boolean; value: number; description: string } {
+    const lowRanks = cards
+      .map(c => this.RANK_VALUES[c.rank])
+      .filter(r => r <= 8)
+      .sort((a, b) => a - b);
+
+    const uniqueLowRanks = [...new Set(lowRanks)];
+
+    if (uniqueLowRanks.length < 5) {
+      return { qualifies: false, value: 0, description: '无低牌' };
+    }
+
+    const lowFive = uniqueLowRanks.slice(0, 5);
+
+    const isLowStraight = lowFive[4] - lowFive[0] === 4 && new Set(lowFive).size === 5;
+    const isLowFlush = new Set(cards.filter(c => lowFive.includes(this.RANK_VALUES[c.rank])).map(c => c.suit)).size === 1;
+
+    if (isLowStraight || isLowFlush) {
+      return { qualifies: false, value: 0, description: '低牌含顺子或同花，不符合条件' };
+    }
+
+    let value = 0;
+    for (let i = 4; i >= 0; i--) {
+      value = value * 100 + lowFive[i];
+    }
+
+    const rankNames = lowFive.map(r => {
+      if (r === 8) return '8';
+      if (r === 7) return '7';
+      if (r === 6) return '6';
+      if (r === 5) return '5';
+      if (r === 4) return '4';
+      if (r === 3) return '3';
+      if (r === 2) return '2';
+      return 'A';
+    });
+
+    return { qualifies: true, value, description: `低牌 ${rankNames.join('-')}` };
+  }
+
+  static evaluateOmahaHiLo(holeCards: Card[], communityCards: Card[], handRankOrder?: HandRank[], isShortDeck?: boolean): { high: HandEvaluation; low: { qualifies: boolean; value: number; description: string } } {
+    const high = this.evaluateOmaha(holeCards, communityCards, handRankOrder, isShortDeck);
+
+    const holeCombos = this.getCombinations(holeCards, 2);
+    const communityCombos = this.getCombinations(communityCards, 3);
+
+    let bestLow: { qualifies: boolean; value: number; description: string } = { qualifies: false, value: 0, description: '无低牌' };
+
+    for (const hc of holeCombos) {
+      for (const cc of communityCombos) {
+        const combo = [...hc, ...cc];
+        const lowResult = this.evaluateLow(combo);
+        if (lowResult.qualifies && (!bestLow.qualifies || lowResult.value < bestLow.value)) {
+          bestLow = lowResult;
+        }
+      }
+    }
+
+    return { high, low: bestLow };
+  }
+
   static compareHands(hand1: HandEvaluation, hand2: HandEvaluation, rankOrder?: HandRank[]): number {
     if (rankOrder) {
       const idx1 = rankOrder.indexOf(hand1.rank);

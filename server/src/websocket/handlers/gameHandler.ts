@@ -934,6 +934,86 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
     }
   });
 
+  socket.on(ClientEvents.DRAW_CARDS, (data: { cardIndices: number[] }, callback?: (response: any) => void) => {
+    try {
+      const playerId = socket.data.playerId;
+      if (!playerId) {
+        safeCallback(callback, { success: false, error: '未登录' });
+        return;
+      }
+
+      const roomId = roomManager.getPlayerRoomId(playerId);
+      if (!roomId) {
+        safeCallback(callback, { success: false, error: '你不在任何房间中' });
+        return;
+      }
+
+      const room = roomManager.getRoom(roomId);
+      if (!room) {
+        safeCallback(callback, { success: false, error: '房间不存在' });
+        return;
+      }
+
+      const gameEngine = gameEngines.get(roomId);
+      if (!gameEngine) {
+        safeCallback(callback, { success: false, error: '游戏引擎未找到' });
+        return;
+      }
+
+      const result = gameEngine.drawCards(playerId, data.cardIndices || []);
+
+      if (result.success) {
+        const gameState = gameEngine.getState();
+        room.gameState = gameState;
+
+        const actor = room.players.find((p: any) => p.id === playerId);
+        io.to(roomId).emit(ServerEvents.ACTION_RESULT, {
+          playerId,
+          playerName: actor?.name || playerId,
+          action: 'draw',
+          amount: data.cardIndices?.length || 0,
+          gameState: sanitizeGameState(gameState),
+          room: sanitizeRoom(room),
+        });
+
+        const newCards = result.newCards || [];
+        const allCards = gameEngine.getPlayerCards(playerId);
+        const playerSockets = Array.from(io.sockets.sockets.values()).filter(
+          s => s.data.playerId === playerId
+        );
+        for (const s of playerSockets) {
+          s.emit(ServerEvents.DEAL_CARDS, {
+            handId: gameState.handId,
+            playerId,
+            cards: allCards,
+          });
+        }
+
+        if (gameState.phase === GamePhase.POST_DRAW) {
+          const currentPlayerId = gameEngine.getCurrentPlayerId();
+          if (currentPlayerId) {
+            handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
+          } else {
+            finishHand(roomId, room, gameEngine, [], [], [], gameState, io, roomManager);
+          }
+        } else if (gameState.phase === GamePhase.ENDED) {
+          // hand ended during draw
+        } else {
+          const currentPlayerId = gameEngine.getCurrentPlayerId();
+          if (currentPlayerId) {
+            handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
+          }
+        }
+
+        safeCallback(callback, { success: true, newCards });
+      } else {
+        safeCallback(callback, { success: false, error: result.error });
+      }
+    } catch (error) {
+      safeCallback(callback, { success: false, error: '换牌失败' });
+    }
+  });
+
   socket.on(ClientEvents.REQUEST_MY_CARDS, (callback?: (response: any) => void) => {
     try {
       const playerId = socket.data.playerId;

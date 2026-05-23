@@ -155,6 +155,14 @@ export function handleAICommands(socket: Socket, io: Server, roomManager: RoomMa
         respond(handleVoteExtendHands(args, playerId, roomManager, io, socket));
         break;
 
+      case AICommand.DRAW:
+        respond(handleDraw(args, playerId, roomManager, io));
+        break;
+
+      case AICommand.SHOW_CARDS:
+        respond(handleShowCards(playerId, roomManager, io));
+        break;
+
       default:
         respond(fail(404, `Unknown command: ${cmd}. Type "help" to see available commands.`));
     }
@@ -1171,6 +1179,101 @@ function handleRollDice(playerId: string, roomManager: RoomManager, io: Server):
   }
 
   return ok({ waitingForOther: true }, 'Dice rolled, waiting for opponent');
+}
+
+function handleDraw(args: Record<string, any>, playerId: string, roomManager: RoomManager, io: Server): AIResponse {
+  const roomId = roomManager.getPlayerRoomId(playerId);
+  if (!roomId) {
+    return fail(400, 'You are not in any room');
+  }
+
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail(404, 'Room not found');
+  }
+
+  const gameEngine = gameEngines.get(roomId);
+  if (!gameEngine) {
+    return fail(404, 'Game engine not found');
+  }
+
+  const gameState = gameEngine.getState();
+  if (gameState.phase !== 'draw') {
+    return fail(409, `Not in draw phase (current: ${gameState.phase})`);
+  }
+
+  let indices: number[] = [];
+  const rawIndices = args.indices;
+  if (rawIndices === undefined || rawIndices === null || rawIndices === 'none' || rawIndices === '') {
+    indices = [];
+  } else if (typeof rawIndices === 'string') {
+    if (rawIndices === 'none') {
+      indices = [];
+    } else {
+      indices = rawIndices.split(',').map((s: string) => parseInt(s.trim())).filter((n: number) => !isNaN(n));
+    }
+  } else if (Array.isArray(rawIndices)) {
+    indices = rawIndices.map((n: any) => parseInt(n)).filter((n: number) => !isNaN(n));
+  }
+
+  const result = gameEngine.drawCards(playerId, indices);
+  if (!result.success) {
+    return fail(400, result.error || 'Failed to draw cards');
+  }
+
+  const actor = room.players.find((p: any) => p.id === playerId);
+  io.to(roomId).emit('game:action_result', {
+    playerId,
+    playerName: actor?.name || playerId,
+    action: 'draw',
+    amount: indices.length,
+    gameState: sanitizeGameState(gameEngine.getState()),
+    room: sanitizeRoom(room),
+  });
+
+  const newState = gameEngine.getState();
+  if (newState.phase === 'post-draw') {
+    io.to(roomId).emit('game:player_turn', {
+      playerId: newState.currentPlayerId,
+      playerName: room.players.find((p: any) => p.id === newState.currentPlayerId)?.name || newState.currentPlayerId,
+      timeout: 30,
+      validActions: gameEngine.getValidActions(newState.currentPlayerId),
+    });
+  }
+
+  return ok(
+    {
+      action: 'draw',
+      replacedCount: indices.length,
+      newCards: result.newCards || [],
+      phase: newState.phase,
+    },
+    `Drew cards: replaced ${indices.length} card(s), phase: ${newState.phase}`
+  );
+}
+
+function handleShowCards(playerId: string, roomManager: RoomManager, io: Server): AIResponse {
+  const roomId = roomManager.getPlayerRoomId(playerId);
+  if (!roomId) {
+    return fail(400, 'You are not in any room');
+  }
+
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail(404, 'Room not found');
+  }
+
+  const gameEngine = gameEngines.get(roomId);
+  if (!gameEngine) {
+    return fail(404, 'Game engine not found');
+  }
+
+  const myCards = gameEngine.getPlayerCards(playerId);
+  if (!myCards) {
+    return fail(400, 'No cards to show');
+  }
+
+  return ok({ cards: myCards }, `Your cards: ${myCards.map((c: any) => c.code || c.rank + c.suit).join(', ')}`);
 }
 
 function handleVoteExtendHands(args: Record<string, any>, playerId: string, roomManager: RoomManager, io: Server, socket: Socket): AIResponse {
