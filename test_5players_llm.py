@@ -30,9 +30,18 @@ from openai import OpenAI
 SERVER_URL = "http://localhost:3000"
 AI_NAMESPACE = "/ai"
 
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "REDACTED_KEY")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://aiproxy.geeknest.net/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL", "my-glm5.1")
+_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llm_config.json")
+def _load_llm_config():
+    if os.path.exists(_CONFIG_FILE):
+        with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+_llm_cfg = _load_llm_config()
+
+LLM_API_KEY = os.environ.get("LLM_API_KEY", _llm_cfg.get("LLM_API_KEY", ""))
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", _llm_cfg.get("LLM_BASE_URL", "https://api.openai.com/v1"))
+LLM_MODEL = os.environ.get("LLM_MODEL", _llm_cfg.get("LLM_MODEL", "gpt-4o-mini"))
 
 if LLM_BASE_URL.endswith("/chat/completions"):
     LLM_BASE_URL = LLM_BASE_URL[: -len("/chat/completions")]

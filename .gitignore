@@ -5,3 +5,5 @@ dist/
 temp_logs/
 .DS_Store
 Thumbs.db
+llm_config.json
+test_error.log
