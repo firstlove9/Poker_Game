@@ -1152,6 +1152,12 @@ export class GameEngine {
   }
 
   private dealRemainingCommunityCards(): void {
+    const noCommunityCards = this.config.variant === GameVariant.FIVE_CARD_DRAW ||
+                              this.config.variant === GameVariant.SEVEN_CARD_STUD;
+    if (noCommunityCards) {
+      return;
+    }
+
     const boardCount = this.variantRules.boardCount || 1;
     const isMultiBoard = boardCount > 1;
 

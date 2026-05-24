@@ -159,6 +159,10 @@ export function handleAICommands(socket: Socket, io: Server, roomManager: RoomMa
         respond(handleDraw(args, playerId, roomManager, io));
         break;
 
+      case AICommand.DISCARD:
+        respond(handleDiscard(args, playerId, roomManager, io));
+        break;
+
       case AICommand.SHOW_CARDS:
         respond(handleShowCards(playerId, roomManager, io));
         break;
@@ -218,18 +222,19 @@ function handleCreateRoom(args: Record<string, any>, playerId: string, roomManag
     variantRule.maxPlayers
   );
 
-  const room = roomManager.createRoom({
-    roomName: args.name || `AI_Room_${Date.now().toString(36)}`,
-    maxPlayers,
-    gameVariant: variant,
-    gameModifier: (args.modifier || 'none') as GameModifier,
-    password: args.password,
-    smallBlind: args.smallBlind || 10,
-    bigBlind: args.bigBlind || 20,
-    hostName: args.playerName || 'AI_Player',
-    fixedHands: args.fixedHands,
-    maxRebuyCount: args.maxRebuyCount,
-  }, playerId);
+  try {
+    const room = roomManager.createRoom({
+      roomName: args.name || `AI_Room_${Date.now().toString(36)}`,
+      maxPlayers,
+      gameVariant: variant,
+      gameModifier: (args.modifier || 'none') as GameModifier,
+      password: args.password,
+      smallBlind: args.smallBlind || 10,
+      bigBlind: args.bigBlind || 20,
+      hostName: args.playerName || 'AI_Player',
+      fixedHands: args.fixedHands,
+      maxRebuyCount: args.maxRebuyCount,
+    }, playerId);
 
   socket.join(room.config.roomId);
 
@@ -262,6 +267,9 @@ function handleCreateRoom(args: Record<string, any>, playerId: string, roomManag
   }
 
   return fail(500, 'Failed to join created room');
+  } catch (e: any) {
+    return fail(400, e.message || 'Failed to create room');
+  }
 }
 
 function handleJoinRoom(args: Record<string, any>, playerId: string, roomManager: RoomManager, io: Server, socket: Socket): AIResponse {
@@ -469,6 +477,8 @@ function handleGetState(playerId: string, roomManager: RoomManager): AIResponse 
     stateData.currentPlayerId = room.gameState.currentPlayerId;
     stateData.pots = room.gameState.pots;
     stateData.handId = room.gameState.handId;
+    stateData.boardCards = room.gameState.boardCards;
+    stateData.targetSuit = room.gameState.targetSuit;
   }
 
   if (room.gameState?.lastShowdownResult) {
@@ -1181,6 +1191,74 @@ function handleRollDice(playerId: string, roomManager: RoomManager, io: Server):
   return ok({ waitingForOther: true }, 'Dice rolled, waiting for opponent');
 }
 
+function handleDiscard(args: Record<string, any>, playerId: string, roomManager: RoomManager, io: Server): AIResponse {
+  const roomId = roomManager.getPlayerRoomId(playerId);
+  if (!roomId) {
+    return fail(400, 'You are not in any room');
+  }
+
+  const room = roomManager.getRoom(roomId);
+  if (!room) {
+    return fail(404, 'Room not found');
+  }
+
+  const gameEngine = gameEngines.get(roomId);
+  if (!gameEngine) {
+    return fail(404, 'Game engine not found');
+  }
+
+  const cardIndex = parseInt(args.cardIndex);
+  if (isNaN(cardIndex) || cardIndex < 0) {
+    return fail(400, 'Invalid cardIndex parameter');
+  }
+
+  const result = gameEngine.discardCard(playerId, cardIndex);
+  if (!result.success) {
+    return fail(400, result.error || 'Failed to discard card');
+  }
+
+  const gameStateAfterDiscard = gameEngine.getState();
+  room.gameState = gameStateAfterDiscard;
+
+  const actor = room.players.find((p: any) => p.id === playerId);
+  io.to(roomId).emit('game:action_result', {
+    playerId,
+    playerName: actor?.name || playerId,
+    action: 'discard',
+    amount: 0,
+    gameState: sanitizeGameState(gameStateAfterDiscard),
+    room: sanitizeRoom(room),
+  });
+
+  const newCards = gameEngine.getPlayerCards(playerId);
+  const playerSockets = Array.from(io.sockets.sockets.values()).filter(
+    (s: any) => s.data.playerId === playerId
+  );
+  for (const s of playerSockets) {
+    s.emit('game:deal_cards', {
+      handId: gameStateAfterDiscard.handId,
+      playerId,
+      cards: newCards,
+    });
+  }
+
+  if (gameStateAfterDiscard.phase === 'pre-flop' || gameStateAfterDiscard.phase === 'discard') {
+    const currentPlayerId = gameEngine.getCurrentPlayerId();
+    if (currentPlayerId) {
+      handlePlayerTurnWithAfk(roomId, room, gameEngine, io, roomManager);
+    }
+  }
+
+  return ok(
+    {
+      action: 'discard',
+      cardIndex,
+      phase: gameStateAfterDiscard.phase,
+    },
+    `Discarded card at index ${cardIndex}, phase: ${gameStateAfterDiscard.phase}`
+  );
+}
+
 function handleDraw(args: Record<string, any>, playerId: string, roomManager: RoomManager, io: Server): AIResponse {
   const roomId = roomManager.getPlayerRoomId(playerId);
   if (!roomId) {
@@ -1221,13 +1299,16 @@ function handleDraw(args: Record<string, any>, playerId: string, roomManager: Ro
     return fail(400, result.error || 'Failed to draw cards');
   }
 
+  const updatedGameState = gameEngine.getState();
+  room.gameState = updatedGameState;
+
   const actor = room.players.find((p: any) => p.id === playerId);
   io.to(roomId).emit('game:action_result', {
     playerId,
     playerName: actor?.name || playerId,
     action: 'draw',
     amount: indices.length,
-    gameState: sanitizeGameState(gameEngine.getState()),
+    gameState: sanitizeGameState(updatedGameState),
     room: sanitizeRoom(room),
   });
 

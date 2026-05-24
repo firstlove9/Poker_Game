@@ -21,6 +21,7 @@ export enum AICommand {
   VOTE_EXTEND_HANDS = 'vote-extend-hands',
   DRAW = 'draw',
   SHOW_CARDS = 'show-cards',
+  DISCARD = 'discard',
 }
 
 export interface AICommandDefinition {
@@ -215,6 +216,14 @@ export const AI_COMMAND_REGISTRY: Record<AICommand, AICommandDefinition> = {
     description: 'Show/hole cards at showdown (Omaha variants)',
     params: [],
     examples: ['show-cards'],
+  },
+  [AICommand.DISCARD]: {
+    name: AICommand.DISCARD,
+    description: 'Discard a card (Pineapple/Crazy Pineapple discard phase)',
+    params: [
+      { name: 'cardIndex', type: 'number', required: true, description: 'Index of the card to discard (0-based)' },
+    ],
+    examples: ['discard --cardIndex 0', 'discard --cardIndex 2'],
   },
 };
 
