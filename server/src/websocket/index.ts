@@ -2,7 +2,7 @@ import { Server, Socket } from 'socket.io';
 import { RoomManager } from '../room/RoomManager';
 import { handleRoomEvents, tryStartGame } from './handlers/roomHandler';
 import { handleGameEvents } from './handlers/gameHandler';
-import { handleAICommands } from './handlers/aiHandler';
+import { handleAICommands, checkAIIdle, checkRoomAutoClose } from './handlers/aiHandler';
 import { ServerEvents } from '../types/events';
 import { RoomStatus, PlayerRoomRole } from '../types/room';
 import { AI_NAMESPACE, AICommand, AI_COMMAND_REGISTRY } from '../types/ai';
@@ -269,4 +269,9 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
       }
     });
   });
+
+  setInterval(() => {
+    checkAIIdle(io, roomManager);
+    checkRoomAutoClose(io, roomManager);
+  }, 60 * 1000);
 }

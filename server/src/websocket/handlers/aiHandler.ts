@@ -7,6 +7,60 @@ import { gameEngines, finishHand } from './gameHandler';
 import { tryStartGame, handlePlayerTurnWithAfk } from './roomHandler';
 import { addActionLog, loadRoomLogs } from '../../room/ActionLogManager';
 
+const AI_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+const aiLastActivity: Map<string, number> = new Map();
+
+export function trackAIActivity(playerId: string): void {
+  aiLastActivity.set(playerId, Date.now());
+}
+
+export function checkAIIdle(io: Server, roomManager: RoomManager): void {
+  const now = Date.now();
+  for (const [playerId, lastActivity] of aiLastActivity.entries()) {
+    if (now - lastActivity > AI_IDLE_TIMEOUT_MS) {
+      const roomId = roomManager.getPlayerRoomId(playerId);
+      if (roomId) {
+        const room = roomManager.getRoom(roomId);
+        if (room) {
+          const player = room.players.find((p: any) => p.id === playerId);
+          if (player && player.isOnline) {
+            player.isOnline = false;
+            player.disconnectedAt = Date.now();
+            console.log(`[AI-IDLE] AI player ${player.name} (${playerId}) marked offline after 10min idle`);
+            io.to(roomId).emit('room:player_left', {
+              playerId,
+              room: sanitizeRoom(room),
+              isTemporary: true,
+            });
+          }
+        }
+      }
+      aiLastActivity.delete(playerId);
+    }
+  }
+}
+
+export function checkRoomAutoClose(io: Server, roomManager: RoomManager): void {
+  const ROOM_EMPTY_TIMEOUT_MS = 30 * 60 * 1000;
+  const rooms = roomManager.getRoomList();
+  for (const room of rooms) {
+    const allOffline = room.players.length > 0 && room.players.every((p: any) => !p.isOnline);
+    if (allOffline) {
+      const earliestDisconnect = room.players.reduce((min: number, p: any) => {
+        if (p.disconnectedAt && (!min || p.disconnectedAt < min)) return p.disconnectedAt;
+        return min;
+      }, 0);
+      if (earliestDisconnect && Date.now() - earliestDisconnect > ROOM_EMPTY_TIMEOUT_MS) {
+        const roomId = room.config.roomId;
+        console.log(`[ROOM-AUTO-CLOSE] Room ${room.config.roomName} (${roomId}) closed: all players offline for 30min`);
+        gameEngines.delete(roomId);
+        roomManager.deleteRoom(roomId);
+        io.emit('room:updated', { type: 'deleted', roomId });
+      }
+    }
+  }
+}
+
 function syncPlayerChipsToRoom(gameEngine: any, room: any): void {
   const enginePlayers = gameEngine.getPlayers();
   for (const ep of enginePlayers) {
@@ -61,8 +115,10 @@ function sanitizeRoom(room: any): any {
 
 export function handleAICommands(socket: Socket, io: Server, roomManager: RoomManager): void {
   const playerId = socket.data.playerId;
+  trackAIActivity(playerId);
 
   socket.on('ai:cmd', (request: AIRequest, callback?: (response: AIResponse) => void) => {
+    trackAIActivity(playerId);
     const respond = (response: AIResponse) => {
       response.reqId = request.reqId;
       if (typeof callback === 'function') {
@@ -639,6 +695,38 @@ function handleAction(args: Record<string, any>, playerId: string, roomManager: 
       const nonFoldedPlayers = room.players.filter((p: any) =>
         gameState.playerStatus?.[p.id] !== 'folded'
       );
+
+      const allAI = nonFoldedPlayers.length === 2 && nonFoldedPlayers.every((p: any) => p.id.startsWith('ai_'));
+      if (allAI) {
+        const autoResult = gameEngine.submitRunItTwiceChoice(nonFoldedPlayers[0].id, 'once');
+        if (autoResult.success) {
+          gameEngine.submitRunItTwiceChoice(nonFoldedPlayers[1].id, 'once');
+        }
+        room.gameState = gameEngine.getState();
+
+        const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
+        const { winners, potResults, allHands } = gameEngine.showdown();
+        const finalGameState = gameEngine.getState();
+        room.gameState = finalGameState;
+        syncPlayerChipsToRoom(gameEngine, room);
+
+        for (const w of winners) {
+          const roomPlayer = room.players.find((rp: any) => rp.id === w.playerId);
+          if (roomPlayer) w.playerName = roomPlayer.name;
+        }
+        for (const h of allHands) {
+          const roomPlayer = room.players.find((rp: any) => rp.id === h.playerId);
+          if (roomPlayer) h.playerName = roomPlayer.name;
+        }
+
+        finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
+
+        return ok(
+          { action: normalizedAction, amount: args.amount, phase: 'showdown', autoSkipRIT: true },
+          `Action: ${normalizedAction} → Both AI, skipped RIT (settled once)`
+        );
+      }
+
       io.to(roomId).emit('game:run_it_twice_ask', {
         gameState: sanitizeGameState(gameState),
         players: nonFoldedPlayers.map((p: any) => ({ id: p.id, name: p.name })),
@@ -1045,6 +1133,55 @@ function handleRunItTwiceChoice(args: Record<string, any>, playerId: string, roo
 
   if (result.bothSubmitted) {
     if (result.needDice) {
+      const nonFoldedPlayers = room.players.filter((p: any) =>
+        gameEngine.getState().playerStatus?.[p.id] !== 'folded'
+      );
+      const hasHuman = nonFoldedPlayers.some((p: any) => !p.id.startsWith('ai_'));
+      const hasAI = nonFoldedPlayers.some((p: any) => p.id.startsWith('ai_'));
+
+      if (hasHuman && hasAI && nonFoldedPlayers.length === 2) {
+        const humanPlayer = nonFoldedPlayers.find((p: any) => !p.id.startsWith('ai_'))!;
+        const aiPlayer = nonFoldedPlayers.find((p: any) => p.id.startsWith('ai_'))!;
+        const humanChoice = gameEngine.getState().runItTwiceChoices?.[humanPlayer.id] || 'once';
+        const finalChoice = humanChoice as 'once' | 'twice';
+
+        gameEngine.getState().runItTwiceDiceResult = {
+          player1: { id: humanPlayer.id, value: 6 },
+          player2: { id: aiPlayer.id, value: 1 },
+          finalChoice,
+        };
+
+        io.to(roomId).emit('game:run_it_twice_executing', {
+          finalChoice,
+          gameState: sanitizeGameState(gameEngine.getState()),
+          humanDecided: true,
+          humanPlayerId: humanPlayer.id,
+          humanPlayerName: humanPlayer.name,
+        });
+
+        const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
+        const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
+        const finalGameState = gameEngine.getState();
+        room.gameState = finalGameState;
+        syncPlayerChipsToRoom(gameEngine, room);
+
+        for (const w of winners) {
+          const roomPlayer = room.players.find((rp: any) => rp.id === w.playerId);
+          if (roomPlayer) w.playerName = roomPlayer.name;
+        }
+        for (const h of allHands) {
+          const roomPlayer = room.players.find((rp: any) => rp.id === h.playerId);
+          if (roomPlayer) h.playerName = roomPlayer.name;
+        }
+
+        finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
+
+        return ok(
+          { choice, finalChoice, phase: 'showdown', humanDecided: true, humanPlayerId: humanPlayer.id },
+          `Run-it-twice: AI choice overridden by human player (${humanPlayer.name}), settled as ${finalChoice}`
+        );
+      }
+
       io.to(roomId).emit('game:run_it_twice_dice_result', {
         gameState: sanitizeGameState(gameEngine.getState()),
         needDice: true,
@@ -1111,6 +1248,17 @@ function handleRollDice(playerId: string, roomManager: RoomManager, io: Server):
   }
 
   const gameState = gameEngine.getState();
+
+  const nonFoldedPlayers = room.players.filter((p: any) =>
+    gameState.playerStatus?.[p.id] !== 'folded'
+  );
+  const hasHuman = nonFoldedPlayers.some((p: any) => !p.id.startsWith('ai_'));
+  const hasAI = nonFoldedPlayers.some((p: any) => p.id.startsWith('ai_'));
+
+  if (hasHuman && hasAI && nonFoldedPlayers.length === 2 && playerId.startsWith('ai_')) {
+    return fail(409, 'Dice not needed: human player decides the run-it-twice choice');
+  }
+
   if (!gameState.runItTwiceDiceReady || gameState.runItTwiceDiceReady[playerId]) {
     return fail(409, 'Cannot roll dice now');
   }

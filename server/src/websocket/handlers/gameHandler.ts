@@ -451,6 +451,35 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
           const nonFoldedPlayers = room.players.filter((p: any) =>
             gameState.playerStatus?.[p.id] !== 'folded'
           );
+
+          const allAI = nonFoldedPlayers.length === 2 && nonFoldedPlayers.every((p: any) => p.id.startsWith('ai_'));
+          if (allAI) {
+            const autoResult = gameEngine.submitRunItTwiceChoice(nonFoldedPlayers[0].id, 'once');
+            if (autoResult.success) {
+              gameEngine.submitRunItTwiceChoice(nonFoldedPlayers[1].id, 'once');
+            }
+            room.gameState = gameEngine.getState();
+
+            const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
+            const { winners, potResults, allHands } = gameEngine.showdown();
+            const finalGameState = gameEngine.getState();
+            room.gameState = finalGameState;
+            syncPlayerChipsToRoom(gameEngine, room);
+
+            for (const w of winners) {
+              const roomPlayer = room.players.find((rp: any) => rp.id === w.playerId);
+              if (roomPlayer) w.playerName = roomPlayer.name;
+            }
+            for (const h of allHands) {
+              const roomPlayer = room.players.find((rp: any) => rp.id === h.playerId);
+              if (roomPlayer) h.playerName = roomPlayer.name;
+            }
+
+            finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
+            safeCallback(callback, { success: true, autoSkipRIT: true });
+            return;
+          }
+
           io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_ASK, {
             gameState: sanitizeGameState(gameState),
             players: nonFoldedPlayers.map((p: any) => ({ id: p.id, name: p.name })),
@@ -604,6 +633,52 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
 
       if (result.bothSubmitted) {
         if (result.needDice) {
+          const nonFoldedPlayers = room.players.filter((p: any) =>
+            gameState.playerStatus?.[p.id] !== 'folded'
+          );
+          const hasHuman = nonFoldedPlayers.some((p: any) => !p.id.startsWith('ai_'));
+          const hasAI = nonFoldedPlayers.some((p: any) => p.id.startsWith('ai_'));
+
+          if (hasHuman && hasAI && nonFoldedPlayers.length === 2) {
+            const humanPlayer = nonFoldedPlayers.find((p: any) => !p.id.startsWith('ai_'))!;
+            const aiPlayer = nonFoldedPlayers.find((p: any) => p.id.startsWith('ai_'))!;
+            const humanChoice = gameEngine.getState().runItTwiceChoices?.[humanPlayer.id] || 'once';
+            const finalChoice = humanChoice as 'once' | 'twice';
+
+            gameEngine.getState().runItTwiceDiceResult = {
+              player1: { id: humanPlayer.id, value: 6 },
+              player2: { id: aiPlayer.id, value: 1 },
+              finalChoice,
+            };
+
+            io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_EXECUTING, {
+              finalChoice,
+              gameState: sanitizeGameState(gameEngine.getState()),
+              humanDecided: true,
+              humanPlayerId: humanPlayer.id,
+              humanPlayerName: humanPlayer.name,
+            });
+
+            const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
+            const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
+            const finalGameState = gameEngine.getState();
+            room.gameState = finalGameState;
+            syncPlayerChipsToRoom(gameEngine, room);
+
+            for (const w of winners) {
+              const roomPlayer = room.players.find((p: any) => p.id === w.playerId);
+              if (roomPlayer) w.playerName = roomPlayer.name;
+            }
+            for (const h of allHands) {
+              const roomPlayer = room.players.find((p: any) => p.id === h.playerId);
+              if (roomPlayer) h.playerName = roomPlayer.name;
+            }
+
+            finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
+            safeCallback(callback, { success: true, humanDecided: true, finalChoice });
+            return;
+          }
+
           io.to(roomId).emit(ServerEvents.RUN_IT_TWICE_DICE_RESULT, {
             gameState: sanitizeGameState(gameState),
             needDice: true,
