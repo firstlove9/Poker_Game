@@ -915,10 +915,15 @@ export default function GamePage() {
       && currentRoom.config.fixedHands > 0
       && (currentRoom.handCount || 0) >= currentRoom.config.fixedHands
     )
+    const otherPlayers = currentRoom?.players?.filter((p: any) => p.id !== myPlayerId) || []
+    const isOnlyActiveOnline = otherPlayers.length > 0 && otherPlayers.every((p: any) =>
+      p.playerRoomRole === 'spectator' || !p.isOnline
+    )
     const needVote = hasPlayed
       && role !== 'spectator'
       && role !== 'busted'
       && !isFinal
+      && !isOnlyActiveOnline
 
     if (needVote) {
       try {

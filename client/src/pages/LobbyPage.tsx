@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Plus, Play, Lock, Users, RefreshCw } from 'lucide-react'
 import { useSocketStore } from '../stores/socketStore'
-import { GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO } from '../types'
+import { GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO, Card } from '../types'
 import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
 import { ClientEvents, ServerEvents, Room } from '../types'
 import CreateRoomModal from '../components/CreateRoomModal'
+import PokerCard from '../components/PokerCard'
 
 export default function LobbyPage() {
   const navigate = useNavigate()
@@ -235,6 +236,75 @@ export default function LobbyPage() {
                     {room.status === 'playing' ? '观战' : '加入'} →
                   </button>
                 </div>
+
+                {room.status === 'playing' && room.gameState && (
+                  <div className="mt-3 pt-3 border-t border-white/10">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-white/50 text-xs">
+                        {room.gameState.phase === 'pre-flop' ? '翻牌前' :
+                         room.gameState.phase === 'flop' ? '翻牌' :
+                         room.gameState.phase === 'turn' ? '转牌' :
+                         room.gameState.phase === 'river' ? '河牌' :
+                         room.gameState.phase === 'showdown' ? '摊牌' :
+                         room.gameState.phase === 'draw' ? '换牌' :
+                         room.gameState.phase === 'post-draw' ? '换牌后' :
+                         room.gameState.phase === 'run-it-twice-choice' ? '跑马选择' :
+                         room.gameState.phase === 'run-it-twice-dice' ? '掷骰子' :
+                         room.gameState.phase}
+                      </span>
+                      <span className="text-yellow-300 text-xs font-bold">
+                        底池: ${(room.gameState.totalPot || 0).toLocaleString()}
+                      </span>
+                      {room.handCount != null && (room.config?.fixedHands ?? 0) > 0 && (
+                        <span className="text-white/40 text-xs">
+                          第{room.handCount}局
+                        </span>
+                      )}
+                    </div>
+
+                    {room.gameState.communityCards?.length > 0 && (
+                      <div className="flex gap-1 mb-2">
+                        {room.gameState.communityCards.map((card: Card, i: number) => (
+                          <PokerCard key={i} card={card} size="sm" />
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="space-y-0.5">
+                      {room.players?.filter((p: any) =>
+                        p.playerRoomRole !== 'spectator' && room.gameState?.playerStatus?.[p.id] !== 'folded'
+                      ).map((p: any) => (
+                        <div key={p.id} className="flex justify-between items-center text-xs">
+                          <span className={`${room.gameState?.currentPlayerId === p.id ? 'text-yellow-300 font-bold' : 'text-white/60'} truncate max-w-[120px]`}>
+                            {room.gameState?.currentPlayerId === p.id && '▶ '}
+                            {p.name}
+                          </span>
+                          <span className="text-white/40">
+                            ${(room.gameState?.roundBets?.[p.id] || 0).toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
+                      {room.players?.filter((p: any) =>
+                        room.gameState?.playerStatus?.[p.id] === 'folded'
+                      ).map((p: any) => (
+                        <div key={p.id} className="flex justify-between items-center text-xs opacity-40">
+                          <span className="truncate max-w-[120px]">✗ {p.name}</span>
+                          <span className="text-red-400/60">弃牌</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {room.lastShowdownResult?.winners && room.lastShowdownResult.winners.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-white/5">
+                        <div className="text-xs text-green-400/80">
+                          🏆 {room.lastShowdownResult!.winners!.map((w: any) =>
+                            `${w.playerName} +$${w.winAmount?.toLocaleString()}`
+                          ).join(', ')}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </motion.div>
             ))}
           </div>

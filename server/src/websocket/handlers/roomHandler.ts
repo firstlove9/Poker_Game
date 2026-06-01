@@ -13,6 +13,14 @@ function safeCallback(callback: any, response: any): void {
   }
 }
 
+function isOnlyActivePlayerOnline(room: any, playerId: string): boolean {
+  const otherPlayers = room.players.filter((p: any) => p.id !== playerId);
+  const allOthersSpectatorOrOffline = otherPlayers.every((p: any) =>
+    p.playerRoomRole === PlayerRoomRole.SPECTATOR || !p.isOnline
+  );
+  return allOthersSpectatorOrOffline && otherPlayers.length > 0;
+}
+
 export function tryStartGame(roomId: string, roomManager: RoomManager, io: Server): boolean {
   const room = roomManager.getRoom(roomId);
   if (!room || room.status === RoomStatus.PLAYING) return false;
@@ -311,7 +319,25 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
       }
 
       const roomId = roomManager.getPlayerRoomId(playerId);
-      const result = roomManager.leaveRoom(playerId);
+      let result = roomManager.leaveRoom(playerId);
+
+      if (!result.success && roomId) {
+        const room = roomManager.getRoom(roomId);
+        if (room && isOnlyActivePlayerOnline(room, playerId)) {
+          result = roomManager.leaveRoom(playerId, true);
+          if (result.success) {
+            gameEngines.delete(roomId);
+            cleanupRoomLogs(roomId);
+            roomManager.deleteRoom(roomId);
+            socket.leave(roomId);
+            io.to(roomId).emit(ServerEvents.ROOM_LEFT, { reason: 'only-active-left' });
+            io.emit(ServerEvents.ROOM_UPDATED, { type: 'deleted', roomId });
+            socket.data.roomId = null;
+            safeCallback(callback, { success: true, directLeave: true, roomClosed: true });
+            return;
+          }
+        }
+      }
 
       if (result.success) {
         if (roomId) {
@@ -788,28 +814,35 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
             || (role === PlayerRoomRole.ACTIVE && room.status !== RoomStatus.PLAYING)
             || (role === PlayerRoomRole.ACTIVE && room.status === RoomStatus.PLAYING
               && (room.gameState?.playerStatus?.[playerId] === undefined
-                || room.gameState?.playerStatus?.[playerId] === 'folded'));
+                || room.gameState?.playerStatus?.[playerId] === 'folded'))
+            || isOnlyActivePlayerOnline(room, playerId);
           if (canDirectLeave) {
+            const wasOnlyActive = isOnlyActivePlayerOnline(room, playerId);
             const leaveResult = roomManager.leaveRoom(playerId, true);
             if (leaveResult.success) {
               socket.leave(roomId);
-              const updatedRoom = roomManager.getRoom(roomId);
-              if (updatedRoom) {
-                io.to(roomId).emit(ServerEvents.PLAYER_LEFT, {
-                  playerId,
-                  room: sanitizeRoom(updatedRoom),
-                });
-                io.emit(ServerEvents.ROOM_UPDATED, {
-                  type: 'updated',
-                  room: sanitizeRoom(updatedRoom),
-                });
+              if (wasOnlyActive) {
+                gameEngines.delete(roomId);
+                cleanupRoomLogs(roomId);
+                roomManager.deleteRoom(roomId);
+                io.to(roomId).emit(ServerEvents.ROOM_LEFT, { reason: 'only-active-left' });
+                io.emit(ServerEvents.ROOM_UPDATED, { type: 'deleted', roomId });
               } else {
-                io.emit(ServerEvents.ROOM_UPDATED, {
-                  type: 'deleted',
-                  roomId,
-                });
+                const updatedRoom = roomManager.getRoom(roomId);
+                if (updatedRoom) {
+                  io.to(roomId).emit(ServerEvents.PLAYER_LEFT, {
+                    playerId,
+                    room: sanitizeRoom(updatedRoom),
+                  });
+                  io.emit(ServerEvents.ROOM_UPDATED, {
+                    type: 'updated',
+                    room: sanitizeRoom(updatedRoom),
+                  });
+                } else {
+                  io.emit(ServerEvents.ROOM_UPDATED, { type: 'deleted', roomId });
+                }
               }
-              safeCallback(callback, { success: true, directLeave: true });
+              safeCallback(callback, { success: true, directLeave: true, roomClosed: wasOnlyActive });
               return;
             }
           }

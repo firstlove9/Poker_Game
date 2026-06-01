@@ -211,11 +211,16 @@ export default function RoomPage() {
     const pid = getMyPlayerId()
     const myPlayer = currentRoom?.players.find((p: any) => p.id === pid)
     const role = myPlayer?.playerRoomRole
+    const otherPlayers = currentRoom?.players.filter((p: any) => p.id !== pid) || []
+    const isOnlyActiveOnline = otherPlayers.length > 0 && otherPlayers.every((p: any) =>
+      p.playerRoomRole === 'spectator' || !p.isOnline
+    )
     const needVote = role === 'active'
       && currentRoom?.status === 'playing'
       && pid
       && currentRoom?.gameState?.playerStatus?.[pid] !== undefined
       && currentRoom?.gameState?.playerStatus?.[pid] !== 'folded'
+      && !isOnlyActiveOnline
 
     if (needVote) {
       try {

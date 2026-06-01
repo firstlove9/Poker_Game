@@ -61,6 +61,14 @@ export function checkRoomAutoClose(io: Server, roomManager: RoomManager): void {
   }
 }
 
+function isOnlyActivePlayerOnline(room: any, playerId: string): boolean {
+  const otherPlayers = room.players.filter((p: any) => p.id !== playerId);
+  const allOthersSpectatorOrOffline = otherPlayers.every((p: any) =>
+    p.playerRoomRole === PlayerRoomRole.SPECTATOR || !p.isOnline
+  );
+  return allOthersSpectatorOrOffline && otherPlayers.length > 0;
+}
+
 function syncPlayerChipsToRoom(gameEngine: any, room: any): void {
   const enginePlayers = gameEngine.getPlayers();
   for (const ep of enginePlayers) {
@@ -384,26 +392,41 @@ function handleLeaveRoom(playerId: string, roomManager: RoomManager, io: Server,
     return fail(400, 'You are not in any room');
   }
 
-  const result = roomManager.leaveRoom(playerId);
+  const room = roomManager.getRoom(roomId);
+  const wasOnlyActive = room ? isOnlyActivePlayerOnline(room, playerId) : false;
+
+  let result = roomManager.leaveRoom(playerId);
+
+  if (!result.success && room && wasOnlyActive) {
+    result = roomManager.leaveRoom(playerId, true);
+  }
+
   if (result.success) {
     socket.leave(roomId);
 
-    const updatedRoom = roomManager.getRoom(roomId);
-    if (updatedRoom) {
-      io.to(roomId).emit('room:player_left', {
-        playerId,
-        room: sanitizeRoom(updatedRoom),
-      });
-      io.emit('room:updated', {
-        type: 'updated',
-        room: sanitizeRoom(updatedRoom),
-      });
-    } else {
+    if (wasOnlyActive) {
+      gameEngines.delete(roomId);
+      roomManager.deleteRoom(roomId);
+      io.to(roomId).emit('room:player_left', { playerId, reason: 'only-active-left' });
       io.emit('room:updated', { type: 'deleted', roomId });
+    } else {
+      const updatedRoom = roomManager.getRoom(roomId);
+      if (updatedRoom) {
+        io.to(roomId).emit('room:player_left', {
+          playerId,
+          room: sanitizeRoom(updatedRoom),
+        });
+        io.emit('room:updated', {
+          type: 'updated',
+          room: sanitizeRoom(updatedRoom),
+        });
+      } else {
+        io.emit('room:updated', { type: 'deleted', roomId });
+      }
     }
 
     socket.data.roomId = null;
-    return ok(null, `Left room: ${roomId}`);
+    return ok({ roomClosed: wasOnlyActive }, `Left room: ${roomId}${wasOnlyActive ? ' (room closed - only active player)' : ''}`);
   }
 
   return fail(400, result.error || 'Failed to leave room');

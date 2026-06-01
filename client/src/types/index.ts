@@ -293,6 +293,10 @@ export interface Room {
   scoreboardEntries?: ScoreboardEntry[];
   gameState?: GameState;
   handCount?: number;
+  lastShowdownResult?: {
+    winners: WinnerInfo[];
+    communityCards: Card[];
+  };
   playerRebuyCounts?: Record<string, number>;
   voteExtendHands?: {
     initiatorId: string;

@@ -20,8 +20,10 @@ export function createRoomRoutes(roomManager: RoomManager): Router {
         gameVariant: room.config.gameVariant,
         gameModifier: room.config.gameModifier,
         mixedRotation: room.config.mixedRotation,
+        fixedHands: room.config.fixedHands,
       },
       status: room.status,
+      handCount: room.handCount,
       players: room.players.map(p => ({
         id: p.id,
         name: p.name,
@@ -30,7 +32,24 @@ export function createRoomRoutes(roomManager: RoomManager): Router {
         chips: p.chips,
         isReady: p.isReady,
         isOnline: p.isOnline,
+        playerRoomRole: p.playerRoomRole,
       })),
+      gameState: room.gameState ? {
+        handId: room.gameState.handId,
+        phase: room.gameState.phase,
+        communityCards: room.gameState.communityCards,
+        boardCards: room.gameState.boardCards,
+        totalPot: room.gameState.totalPot,
+        currentBet: room.gameState.currentBet,
+        roundBets: room.gameState.roundBets,
+        playerStatus: room.gameState.playerStatus,
+        dealerIndex: room.gameState.dealerIndex,
+        currentPlayerId: room.gameState.currentPlayerId,
+      } : undefined,
+      lastShowdownResult: room.gameState?.lastShowdownResult ? {
+        winners: room.gameState.lastShowdownResult.winners,
+        communityCards: room.gameState.lastShowdownResult.communityCards,
+      } : undefined,
     }));
     res.json({ success: true, rooms });
   });
