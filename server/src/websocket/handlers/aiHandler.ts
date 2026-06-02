@@ -770,13 +770,47 @@ function handleAction(args: Record<string, any>, playerId: string, roomManager: 
             if (afkChoiceResult.bothSubmitted) {
               room.gameState = gameEngine.getState();
               if (afkChoiceResult.needDice) {
-                io.to(roomId).emit('game:run_it_twice_dice_result', {
-                  gameState: sanitizeGameState(gameEngine.getState()),
-                  needDice: true,
-                  players: room.players
-                    .filter((rp: any) => gameState.playerStatus?.[rp.id] !== 'folded')
-                    .map((rp: any) => ({ id: rp.id, name: rp.name })),
-                });
+                const onlineActivePlayer = nonFoldedPlayers.find((np: any) => np.id !== p.id && np.isOnline && !np.isAfk);
+                if (onlineActivePlayer) {
+                  const onlineChoice = gameEngine.getState().runItTwiceChoices?.[onlineActivePlayer.id] || 'once';
+                  const finalChoice = onlineChoice as 'once' | 'twice';
+
+                  gameEngine.getState().runItTwiceDiceResult = {
+                    player1: { id: onlineActivePlayer.id, value: 6 },
+                    player2: { id: p.id, value: 1 },
+                    finalChoice,
+                  };
+
+                  io.to(roomId).emit('game:run_it_twice_executing', {
+                    finalChoice,
+                    gameState: sanitizeGameState(gameEngine.getState()),
+                  });
+
+                  const preRunItTwiceCommunityCards = [...gameEngine.getState().communityCards];
+                  const { winners, potResults, allHands } = gameEngine.executeRunItTwice();
+                  const finalGameState = gameEngine.getState();
+                  room.gameState = finalGameState;
+                  syncPlayerChipsToRoom(gameEngine, room);
+
+                  for (const w of winners) {
+                    const roomPlayer = room.players.find((rp: any) => rp.id === w.playerId);
+                    if (roomPlayer) w.playerName = roomPlayer.name;
+                  }
+                  for (const h of allHands) {
+                    const roomPlayer = room.players.find((rp: any) => rp.id === h.playerId);
+                    if (roomPlayer) h.playerName = roomPlayer.name;
+                  }
+
+                  finishHand(roomId, room, gameEngine, winners, potResults, allHands, finalGameState, io, roomManager, preRunItTwiceCommunityCards);
+                } else {
+                  io.to(roomId).emit('game:run_it_twice_dice_result', {
+                    gameState: sanitizeGameState(gameEngine.getState()),
+                    needDice: true,
+                    players: room.players
+                      .filter((rp: any) => gameState.playerStatus?.[rp.id] !== 'folded')
+                      .map((rp: any) => ({ id: rp.id, name: rp.name })),
+                  });
+                }
               } else {
                 const finalChoice = afkChoiceResult.finalChoice || 'once';
                 io.to(roomId).emit('game:run_it_twice_executing', {

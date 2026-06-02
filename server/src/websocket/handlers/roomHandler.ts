@@ -30,7 +30,7 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
   }
 
   const readyPlayers = room.players.filter(p =>
-    p.isReady && p.chips > 0 && p.playerRoomRole !== PlayerRoomRole.SPECTATOR && !p.isAfk
+    (p.isReady || !p.isOnline) && p.chips > 0 && p.playerRoomRole !== PlayerRoomRole.SPECTATOR && !p.isAfk
   );
   if (readyPlayers.length < room.config.minPlayers) return false;
 
@@ -54,7 +54,7 @@ export function tryStartGame(roomId: string, roomManager: RoomManager, io: Serve
       if (!p.isOnline && p.disconnectedAt && (now - p.disconnectedAt) > DISCONNECT_TIMEOUT_MS) return false;
       return true;
     });
-    const allReady = playersNeedReady.every(p => p.isReady);
+    const allReady = playersNeedReady.every(p => p.isReady || !p.isOnline);
     if (!allReady) return false;
 
     if (hasBustedPending) return false;

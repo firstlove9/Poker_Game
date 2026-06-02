@@ -360,6 +360,10 @@ export interface GameState {
   runItTwiceDiceReady?: Record<string, boolean>;
   runItTwiceBoard?: Card[][];
   runItTwiceResults?: RunItTwiceRoundResult[];
+  lastShowdownResult?: {
+    winners: WinnerInfo[];
+    communityCards: Card[];
+  };
 }
 
 export interface Pot {

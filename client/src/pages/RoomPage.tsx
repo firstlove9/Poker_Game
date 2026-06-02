@@ -4,7 +4,8 @@ import { ArrowLeft, Users, Play, Check, X, Coins, HelpCircle, Crown } from 'luci
 import { useSocketStore, saveRoomId, clearSavedRoom } from '../stores/socketStore'
 import { useGameStore } from '../stores/gameStore'
 import { useToastStore } from '../stores/toastStore'
-import { ClientEvents, ServerEvents, GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO } from '../types'
+import { ClientEvents, ServerEvents, GameVariant, GameModifier, VARIANT_RULES, MODIFIER_INFO, Card } from '../types'
+import PokerCard from '../components/PokerCard'
 
 interface VoteInfo {
   initiatorId: string
@@ -62,8 +63,34 @@ export default function RoomPage() {
 
     const handleGameStarted = (data: any) => {
       setCurrentRoom(data.room)
+      const pid = getMyPlayerId()
+      const myPlayer = data.room?.players?.find((p: any) => p.id === pid)
+      if (myPlayer?.playerRoomRole === 'spectator') {
+        saveRoomId(roomId!, 'waiting')
+        fetchRoomInfo()
+        return
+      }
       saveRoomId(roomId!, 'playing')
       navigate(`/game/${roomId}`)
+    }
+
+    const handleActionResult = (data: any) => {
+      if (data.room) setCurrentRoom(data.room)
+      else fetchRoomInfo()
+    }
+
+    const handleDealCards = (_data: any) => {
+      fetchRoomInfo()
+    }
+
+    const handleShowdown = (data: any) => {
+      if (data.room) setCurrentRoom(data.room)
+      else fetchRoomInfo()
+    }
+
+    const handleHandResult = (data: any) => {
+      if (data.room) setCurrentRoom(data.room)
+      else fetchRoomInfo()
     }
 
     const handleVoteLeaveStarted = (data: VoteInfo) => {
@@ -105,6 +132,10 @@ export default function RoomPage() {
     on(ServerEvents.VOTE_LEAVE_RESPONSE, handleVoteLeaveResponse)
     on(ServerEvents.VOTE_LEAVE_ENDED, handleVoteLeaveEnded)
     on(ServerEvents.ROOM_LEFT, handleRoomLeft)
+    on(ServerEvents.ACTION_RESULT, handleActionResult)
+    on(ServerEvents.DEAL_CARDS, handleDealCards)
+    on(ServerEvents.SHOWDOWN, handleShowdown)
+    on(ServerEvents.HAND_RESULT, handleHandResult)
 
     fetchRoomInfo()
 
@@ -118,6 +149,10 @@ export default function RoomPage() {
       off(ServerEvents.VOTE_LEAVE_RESPONSE, handleVoteLeaveResponse)
       off(ServerEvents.VOTE_LEAVE_ENDED, handleVoteLeaveEnded)
       off(ServerEvents.ROOM_LEFT, handleRoomLeft)
+      off(ServerEvents.ACTION_RESULT, handleActionResult)
+      off(ServerEvents.DEAL_CARDS, handleDealCards)
+      off(ServerEvents.SHOWDOWN, handleShowdown)
+      off(ServerEvents.HAND_RESULT, handleHandResult)
     }
   }, [roomId, on, off, setCurrentRoom, navigate, socketPlayerId, currentPlayer?.id])
 
@@ -429,6 +464,95 @@ export default function RoomPage() {
           </div>
         </div>
       </div>
+
+      {/* 牌局实时信息（观战模式） */}
+      {isPlaying && isSpectator && currentRoom.gameState && (
+        <div className="glass-panel p-3 md:p-4 mb-1 md:mb-2 shrink-0">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-yellow-400 text-sm font-bold">👁️ 牌局实况</span>
+              <span className="text-white/40 text-xs">
+                {currentRoom.gameState.phase === 'pre-flop' ? '翻牌前' :
+                 currentRoom.gameState.phase === 'flop' ? '翻牌' :
+                 currentRoom.gameState.phase === 'turn' ? '转牌' :
+                 currentRoom.gameState.phase === 'river' ? '河牌' :
+                 currentRoom.gameState.phase === 'showdown' ? '摊牌' :
+                 currentRoom.gameState.phase === 'draw' ? '换牌' :
+                 currentRoom.gameState.phase === 'post-draw' ? '换牌后' :
+                 currentRoom.gameState.phase === 'run-it-twice-choice' ? '跑马选择' :
+                 currentRoom.gameState.phase === 'run-it-twice-dice' ? '掷骰子' :
+                 currentRoom.gameState.phase}
+              </span>
+            </div>
+            <span className="text-yellow-300 font-bold text-sm">
+              底池: ${(currentRoom.gameState.totalPot || 0).toLocaleString()}
+            </span>
+          </div>
+
+          {currentRoom.gameState.communityCards?.length > 0 && (
+            <div className="flex justify-center gap-1.5 mb-3">
+              {currentRoom.gameState.communityCards.map((card: Card, i: number) => (
+                <PokerCard key={i} card={card} size="sm" />
+              ))}
+            </div>
+          )}
+
+          {currentRoom.gameState.boardCards && currentRoom.gameState.boardCards.length > 0 && currentRoom.gameState.boardCards.map((board: Card[], boardIdx: number) => (
+            <div key={boardIdx} className="mb-2">
+              <div className="text-white/40 text-xs mb-1">板面 {boardIdx + 1}</div>
+              <div className="flex justify-center gap-1.5 mb-1">
+                {board.map((card: Card, i: number) => (
+                  <PokerCard key={i} card={card} size="sm" />
+                ))}
+              </div>
+            </div>
+          ))}
+
+          <div className="space-y-1">
+            {currentRoom.players
+              ?.filter((p: any) => p.playerRoomRole !== 'spectator' && currentRoom.gameState?.playerStatus?.[p.id] !== 'folded')
+              .map((p: any) => (
+                <div key={p.id} className="flex justify-between items-center text-sm">
+                  <span className={`${currentRoom.gameState?.currentPlayerId === p.id ? 'text-yellow-300 font-bold' : 'text-white/70'}`}>
+                    {currentRoom.gameState?.currentPlayerId === p.id && '▶ '}
+                    {p.name}
+                    {currentRoom.gameState?.playerRoles?.[p.id] === 'dealer' && ' (D)'}
+                    {currentRoom.gameState?.playerRoles?.[p.id] === 'small-blind' && ' (SB)'}
+                    {currentRoom.gameState?.playerRoles?.[p.id] === 'big-blind' && ' (BB)'}
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-white/40 text-xs">
+                      下注: ${(currentRoom.gameState?.roundBets?.[p.id] || 0).toLocaleString()}
+                    </span>
+                    <span className="text-yellow-300 font-medium text-xs">
+                      ${p.chips.toLocaleString()}
+                    </span>
+                  </span>
+                </div>
+              ))
+            }
+            {currentRoom.players
+              ?.filter((p: any) => currentRoom.gameState?.playerStatus?.[p.id] === 'folded')
+              .map((p: any) => (
+                <div key={p.id} className="flex justify-between items-center text-sm opacity-40">
+                  <span>✗ {p.name}</span>
+                  <span className="text-red-400/60 text-xs">弃牌</span>
+                </div>
+              ))
+            }
+          </div>
+
+          {currentRoom.gameState?.lastShowdownResult?.winners && currentRoom.gameState.lastShowdownResult.winners.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-white/10">
+              <div className="text-xs text-green-400/80">
+                🏆 上一局: {currentRoom.gameState!.lastShowdownResult!.winners!.map((w: any) =>
+                  `${w.playerName} +$${w.winAmount?.toLocaleString()}`
+                ).join(', ')}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 玩家列表 */}
       <div className="flex-1 min-h-0 overflow-y-auto py-1 md:py-2">
