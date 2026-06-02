@@ -1,0 +1,9 @@
+{
+  "llm": {
+    "api_key": "bce-v3/ALTAK-xxxxx/xxxxxxxxxx",
+    "base_url": "https://qianfan.baidubce.com/anthropic/coding",
+    "model": "qianfan-code-latest",
+    "temperature": 0.9,
+    "max_tokens": 60
+  }
+}

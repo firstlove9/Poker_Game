@@ -7,6 +7,9 @@ temp_logs/
 Thumbs.db
 llm_config.json
 test_error.log
+ai_config.json
 __pycache__/
 *.pyc
 .ai_player_state.json
+*.pid
+chat_record.png
