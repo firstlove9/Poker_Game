@@ -1395,6 +1395,10 @@ function finishHandFromAfk(roomId: string, room: any, gameEngine: GameEngine, io
       runItTwiceResults: finalGameState.runItTwiceResults,
     } : {}),
   });
+  io.of('/ai').to(roomId).emit('game:hand_result', {
+    winners: mergedWinners,
+    communityCards: finalGameState.communityCards,
+  });
 
   room.gameState = {
     ...room.gameState,

@@ -862,7 +862,12 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
                 self.send_cmd("decline-rebuy")
             return True
 
-        if phase in ("waiting", "ended", "run-it-twice-choice", "run-it-twice-dice", "run-it-twice-executing"):
+        if phase in ("waiting", "ended", "run-it-twice-dice", "run-it-twice-executing"):
+            return True
+
+        if phase == "run-it-twice-choice":
+            self.log("🏇 跑马选择 -> once")
+            self.send_cmd("run-it-twice-choice", {"choice": "once"})
             return True
 
         if phase == "showdown":

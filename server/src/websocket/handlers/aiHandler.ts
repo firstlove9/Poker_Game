@@ -770,6 +770,9 @@ function handleAction(args: Record<string, any>, playerId: string, roomManager: 
         gameState: sanitizeGameState(gameState),
         players: nonFoldedPlayers.map((p: any) => ({ id: p.id, name: p.name })),
       });
+      io.of('/ai').to(roomId).emit('game:run_it_twice_ask', {
+        players: nonFoldedPlayers.map((p: any) => ({ id: p.id, name: p.name })),
+      });
 
       for (const p of nonFoldedPlayers) {
         if (p.isAfk) {

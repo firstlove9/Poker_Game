@@ -1317,12 +1317,12 @@ export default function GamePage() {
             </div>
           </div>
           <div className="hidden md:block w-64 flex-shrink-0">
-            <ChatBox />
+            <ChatBox players={currentRoom?.players || []} />
           </div>
           {showMobileChat && (
             <div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setShowMobileChat(false)}>
               <div className="absolute right-0 top-0 bottom-0 w-72" onClick={e => e.stopPropagation()}>
-                <ChatBox />
+                <ChatBox players={currentRoom?.players || []} />
               </div>
             </div>
           )}
@@ -2038,12 +2038,12 @@ export default function GamePage() {
           </div>
           </div>
           <div className="hidden md:block w-64 flex-shrink-0">
-            <ChatBox />
+            <ChatBox players={currentRoom?.players || []} />
           </div>
           {showMobileChat && (
             <div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setShowMobileChat(false)}>
               <div className="absolute right-0 top-0 bottom-0 w-72" onClick={e => e.stopPropagation()}>
-                <ChatBox />
+                <ChatBox players={currentRoom?.players || []} />
               </div>
             </div>
           )}

@@ -4,6 +4,10 @@ import { useSocketStore } from '../stores/socketStore'
 import { useGameStore } from '../stores/gameStore'
 import { ClientEvents, ServerEvents } from '../types'
 
+interface ChatBoxProps {
+  players?: { id: string; name: string }[]
+}
+
 const EMOJI_TABS = [
   {
     label: '😊',
@@ -62,15 +66,19 @@ const EMOJI_TABS = [
   },
 ]
 
-export default function ChatBox() {
+export default function ChatBox({ players = [] }: ChatBoxProps) {
   const { emit, on, off, playerId: myPlayerId } = useSocketStore()
   const { messages, addMessage } = useGameStore()
   const [inputMessage, setInputMessage] = useState('')
   const [showEmojis, setShowEmojis] = useState(false)
+  const [showMentions, setShowMentions] = useState(false)
+  const [mentionFilter, setMentionFilter] = useState('')
+  const [mentionIndex, setMentionIndex] = useState(0)
   const [activeTab, setActiveTab] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const emojiPanelRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const handleChatMessage = (data: any) => {
@@ -111,6 +119,65 @@ export default function ChatBox() {
 
   const handleEmojiClick = (emoji: string) => {
     setInputMessage(prev => prev + emoji)
+  }
+
+  const filteredPlayers = players
+    .filter(p => p.id !== myPlayerId && p.name.toLowerCase().includes(mentionFilter.toLowerCase()))
+    .slice(0, 5)
+
+  const handleInputChange = (value: string) => {
+    setInputMessage(value)
+    // 检测 @ 触发
+    const lastAtIndex = value.lastIndexOf('@')
+    if (lastAtIndex >= 0) {
+      const afterAt = value.slice(lastAtIndex + 1)
+      const hasSpace = afterAt.includes(' ')
+      if (!hasSpace) {
+        setMentionFilter(afterAt)
+        setShowMentions(true)
+        setMentionIndex(0)
+        return
+      }
+    }
+    setShowMentions(false)
+  }
+
+  const handleMentionSelect = (playerName: string) => {
+    const lastAtIndex = inputMessage.lastIndexOf('@')
+    if (lastAtIndex >= 0) {
+      const before = inputMessage.slice(0, lastAtIndex)
+      setInputMessage(`${before}@${playerName} `)
+    }
+    setShowMentions(false)
+    setMentionFilter('')
+    inputRef.current?.focus()
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showMentions && filteredPlayers.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setMentionIndex(prev => (prev + 1) % filteredPlayers.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setMentionIndex(prev => (prev - 1 + filteredPlayers.length) % filteredPlayers.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        handleMentionSelect(filteredPlayers[mentionIndex].name)
+        return
+      }
+      if (e.key === 'Escape') {
+        setShowMentions(false)
+        return
+      }
+    }
+    if (e.key === 'Enter' && !showMentions) {
+      handleSend()
+    }
   }
 
   return (
@@ -182,7 +249,23 @@ export default function ChatBox() {
         </div>
       )}
 
-      <div className="p-2 border-t border-gray-700/50">
+      <div className="p-2 border-t border-gray-700/50 relative">
+        {showMentions && filteredPlayers.length > 0 && (
+          <div className="absolute bottom-full left-2 right-2 mb-1 bg-gray-800 border border-gray-600 rounded-lg shadow-lg overflow-hidden z-10">
+            {filteredPlayers.map((p, i) => (
+              <button
+                key={p.id}
+                onClick={() => handleMentionSelect(p.name)}
+                className={`w-full px-3 py-1.5 text-left text-xs flex items-center gap-2 transition-colors ${
+                  i === mentionIndex ? 'bg-yellow-600/30 text-yellow-300' : 'text-white/80 hover:bg-white/10'
+                }`}
+              >
+                <span className="w-5 h-5 rounded-full bg-gray-600 flex items-center justify-center text-[10px] font-bold">{p.name[0]}</span>
+                <span>{p.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-1">
           <button
             onClick={() => { setShowEmojis(!showEmojis) }}
@@ -195,11 +278,12 @@ export default function ChatBox() {
             <Smile className="w-3.5 h-3.5" />
           </button>
           <input
+            ref={inputRef}
             type="text"
             value={inputMessage}
-            onChange={(e) => setInputMessage(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="输入消息..."
+            onChange={(e) => handleInputChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="输入消息... (@提及玩家)"
             className="flex-1 px-2 py-1.5 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-yellow-400 text-xs"
             maxLength={100}
             autoComplete="off"
