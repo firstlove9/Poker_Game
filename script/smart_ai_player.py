@@ -638,10 +638,16 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
 4. 是否有bluff的价值
 5. 你的形象管理（如果一直很紧，可以偶尔bluff）
 
+重要策略原则：
+- 不要轻易弃牌！尤其在底池赔率有利时（<30%），跟注往往比弃牌好
+- 如果可以check（过牌），绝不弃牌
+- 连续弃牌会让对手看穿你的策略，适当跟注保持不可预测性
+- 只在手牌极差且赔率极差时才弃牌
+
 回复JSON:
 {{"thinking": "详细分析过程（手牌评估、赔率计算、对手读牌、策略选择）", "action": "操作名", "amount": 加注金额(仅raise需要), "chat": "可选：说一句话（20字以内，可为空）"}}
 
-操作: fold弃牌, check过牌, call跟注, raise加注(需amount), all-in全下
+操作: check过牌, call跟注, raise加注(需amount), fold弃牌(仅手牌极差时), all-in全下
 只回复JSON。"""
 
         resp_text = self.llm.chat([{"role": "user", "content": prompt}], temperature=0.7, max_tokens=400)
@@ -682,6 +688,14 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
                 else:
                     action = valid_actions[0] if valid_actions else "fold"
                 amount = None
+
+            # 连续弃牌太多时强制跟注，避免过于被动
+            if action == "fold" and self._consecutive_folds >= 3:
+                if "call" in valid_actions:
+                    self.log(f"  🔥 连续弃牌{self._consecutive_folds}次，强制跟注！")
+                    action = "call"
+                elif "check" in valid_actions:
+                    action = "check"
 
             return action, amount
         except Exception as e:

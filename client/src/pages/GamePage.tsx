@@ -2163,37 +2163,73 @@ export default function GamePage() {
                   </div>
                 )}
                 <div className="flex items-center gap-2 md:gap-3">
-                <span className="text-yellow-300 font-bold text-xs md:text-sm min-w-[40px] md:min-w-[50px]">${raiseAmount}</span>
+                <input
+                  type="number"
+                  min={minRaise}
+                  max={maxRaise}
+                  value={raiseAmount}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value) || minRaise
+                    setRaiseAmount(Math.min(Math.max(val, minRaise), maxRaise))
+                  }}
+                  className="w-16 md:w-20 px-1.5 py-1 bg-white/10 border border-white/20 rounded text-yellow-300 font-bold text-xs md:text-sm text-center focus:outline-none focus:border-yellow-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
                 <input
                   type="range"
                   min={minRaise}
                   max={maxRaise}
+                  step={currentRoom.config.bigBlind}
                   value={raiseAmount}
                   onChange={(e) => setRaiseAmount(parseInt(e.target.value))}
                   className="flex-1 accent-yellow-400 h-6 md:h-auto"
                 />
                 <div className="flex gap-1">
-                  <button
-                    onClick={() => setRaiseAmount(minRaise)}
-                    className="px-2 md:px-2 py-1 md:py-1 bg-white/10 rounded text-white/80 text-xs md:text-xs hover:bg-white/20 min-w-[32px]"
-                  >
-                    Min
-                  </button>
-                  <button
-                    onClick={() => setRaiseAmount(Math.max(minRaise, Math.floor(totalPot / 2)))}
-                    className="px-2 md:px-2 py-1 md:py-1 bg-white/10 rounded text-white/80 text-xs md:text-xs hover:bg-white/20 min-w-[32px]"
-                  >
-                    1/2
-                  </button>
-                  <button
-                    onClick={() => setRaiseAmount(Math.max(minRaise, totalPot))}
-                    className="px-2 md:px-2 py-1 md:py-1 bg-white/10 rounded text-white/80 text-xs md:text-xs hover:bg-white/20 min-w-[32px]"
-                  >
-                    满池
-                  </button>
+                  {gameState.phase === 'pre-flop' ? (
+                    <>
+                      <button
+                        onClick={() => setRaiseAmount(minRaise)}
+                        className="px-1.5 md:px-2 py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
+                      >
+                        Min
+                      </button>
+                      <button
+                        onClick={() => setRaiseAmount(Math.max(minRaise, currentRoom.config.bigBlind * 3))}
+                        className="px-1.5 md:px-2 py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
+                      >
+                        3bet
+                      </button>
+                      <button
+                        onClick={() => setRaiseAmount(Math.max(minRaise, currentRoom.config.bigBlind * 5))}
+                        className="px-1.5 md:px-2 py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
+                      >
+                        5bet
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setRaiseAmount(minRaise)}
+                        className="px-1.5 md:px-2 py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
+                      >
+                        Min
+                      </button>
+                      <button
+                        onClick={() => setRaiseAmount(Math.max(minRaise, Math.floor(totalPot / 2)))}
+                        className="px-1.5 md:px-2 py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
+                      >
+                        1/2池
+                      </button>
+                      <button
+                        onClick={() => setRaiseAmount(Math.max(minRaise, totalPot))}
+                        className="px-1.5 md:px-2 py-1 bg-white/10 rounded text-white/80 text-[10px] md:text-xs hover:bg-white/20"
+                      >
+                        满池
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={() => setRaiseAmount(myChips)}
-                    className="px-2 md:px-2 py-1 md:py-1 bg-purple-600/40 rounded text-white/80 text-xs md:text-xs hover:bg-purple-600/60 min-w-[32px]"
+                    className="px-1.5 md:px-2 py-1 bg-purple-600/40 rounded text-white/80 text-[10px] md:text-xs hover:bg-purple-600/60"
                   >
                     All-in
                   </button>

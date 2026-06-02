@@ -9,3 +9,4 @@ llm_config.json
 test_error.log
 __pycache__/
 *.pyc
+.ai_player_state.json
