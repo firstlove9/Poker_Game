@@ -1009,12 +1009,14 @@ function handleChat(args: Record<string, any>, playerId: string, roomManager: Ro
   const player = room?.players.find(p => p.id === playerId);
 
   if (player) {
-    io.to(roomId).emit('chat:message', {
+    const chatData = {
       playerId,
       playerName: player.name,
       message,
       timestamp: Date.now(),
-    });
+    };
+    io.to(roomId).emit('chat:message', chatData);
+    io.of('/ai').to(roomId).emit('chat:message', chatData);
   }
 
   return ok(null, `Chat sent: "${message}"`);

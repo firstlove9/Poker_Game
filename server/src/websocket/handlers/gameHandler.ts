@@ -923,12 +923,14 @@ export function handleGameEvents(socket: Socket, io: Server, roomManager: RoomMa
       const player = room?.players.find(p => p.id === playerId);
 
       if (player) {
-        io.to(roomId).emit(ServerEvents.CHAT_MESSAGE, {
+        const chatData = {
           playerId,
           playerName: player.name,
           message: data.message,
           timestamp: Date.now(),
-        });
+        };
+        io.to(roomId).emit(ServerEvents.CHAT_MESSAGE, chatData);
+        io.of('/ai').to(roomId).emit('chat:message', chatData);
       }
 
       safeCallback(callback, { success: true });
