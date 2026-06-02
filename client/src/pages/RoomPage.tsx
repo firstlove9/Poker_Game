@@ -317,7 +317,9 @@ export default function RoomPage() {
   const isHost = myPid === currentRoom.config.hostId
   const isReady = myRoomPlayer?.isReady ?? false
   const readyPlayers = currentRoom.players.filter(p => p.isReady).length
-  const canStart = isHost && readyPlayers >= (currentRoom.config.minPlayers || 2)
+  const hostPlayer = currentRoom.players.find((p: any) => p.id === currentRoom.config.hostId)
+  const isHostOffline = hostPlayer && !hostPlayer.isOnline
+  const canStart = (isHost || isHostOffline) && readyPlayers >= (currentRoom.config.minPlayers || 2)
   const isPlaying = currentRoom.status === 'playing'
   const isSpectator = myRoomPlayer?.playerRoomRole === 'spectator'
 
@@ -465,8 +467,8 @@ export default function RoomPage() {
         </div>
       </div>
 
-      {/* 牌局实时信息（观战模式） */}
-      {isPlaying && isSpectator && currentRoom.gameState && (
+      {/* 牌局实时信息（所有玩家在牌局进行中可见） */}
+      {isPlaying && currentRoom.gameState && (
         <div className="glass-panel p-3 md:p-4 mb-1 md:mb-2 shrink-0">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -647,8 +649,8 @@ export default function RoomPage() {
                 👁️ 观战模式 — 牌局结束后可参与下一局
               </div>
             ) : isPlaying ? (
-              <div className="text-gold text-sm md:text-lg font-bold animate-pulse">
-                🎴 游戏进行中，请等待本局结束...
+              <div className="text-gold text-sm md:text-lg font-bold">
+                🎴 牌局进行中 — 观看上方实况，等待本局结束
               </div>
             ) : (
               <>
@@ -668,18 +670,18 @@ export default function RoomPage() {
                   {isReady ? '取消准备' : '准备'}
                 </button>
 
-                {isHost && (
+                {(isHost || isHostOffline) && (
                   <button
                     onClick={handleStartGame}
                     disabled={!canStart}
                     className="btn-poker-primary disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Play className="w-5 h-5" />
-                    开始游戏 ({readyPlayers}/{currentRoom.players.length})
+                    {isHostOffline ? '房主已离线，点击开始' : `开始游戏 (${readyPlayers}/${currentRoom.players.length})`}
                   </button>
                 )}
 
-                {!isHost && readyPlayers < currentRoom.players.length && (
+                {!isHost && !isHostOffline && readyPlayers < currentRoom.players.length && (
                   <div className="text-white/60 text-xs md:text-sm">
                     等待房主开始游戏 ({readyPlayers}/{currentRoom.players.length} 已准备)
                   </div>

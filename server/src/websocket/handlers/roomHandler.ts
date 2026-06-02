@@ -482,6 +482,20 @@ export function handleRoomEvents(socket: Socket, io: Server, roomManager: RoomMa
             room: sanitizeRoom(room),
           });
         }
+      } else if (room) {
+        // 房主离线时，任意玩家也可以触发开始
+        const host = room.players.find(p => p.id === room.config.hostId);
+        if (host && !host.isOnline) {
+          const caller = room.players.find(p => p.id === playerId);
+          if (caller && !caller.isReady && caller.chips > 0) {
+            caller.isReady = true;
+            io.to(roomId).emit(ServerEvents.PLAYER_READY_CHANGED, {
+              playerId,
+              ready: true,
+              room: sanitizeRoom(room),
+            });
+          }
+        }
       }
 
       const started = tryStartGame(roomId, roomManager, io);

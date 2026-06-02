@@ -41,7 +41,7 @@ export function checkAIIdle(io: Server, roomManager: RoomManager): void {
 }
 
 export function checkRoomAutoClose(io: Server, roomManager: RoomManager): void {
-  const ROOM_EMPTY_TIMEOUT_MS = 30 * 60 * 1000;
+  const ROOM_EMPTY_TIMEOUT_MS = 30 * 1000;
   const rooms = roomManager.getRoomList();
   for (const room of rooms) {
     const allOffline = room.players.length > 0 && room.players.every((p: any) => !p.isOnline);
@@ -52,7 +52,8 @@ export function checkRoomAutoClose(io: Server, roomManager: RoomManager): void {
       }, 0);
       if (earliestDisconnect && Date.now() - earliestDisconnect > ROOM_EMPTY_TIMEOUT_MS) {
         const roomId = room.config.roomId;
-        console.log(`[ROOM-AUTO-CLOSE] Room ${room.config.roomName} (${roomId}) closed: all players offline for 30min`);
+        console.log(`[ROOM-AUTO-CLOSE] Room ${room.config.roomName} (${roomId}) closed: all players offline for 30s`);
+        io.to(roomId).emit('room:closed', { roomId, reason: '所有玩家已离线，房间自动关闭' });
         gameEngines.delete(roomId);
         roomManager.deleteRoom(roomId);
         io.emit('room:updated', { type: 'deleted', roomId });
@@ -492,6 +493,20 @@ function handleStartGame(playerId: string, roomManager: RoomManager, io: Server)
         room: sanitizeRoom(room),
       });
     }
+  } else {
+    // 房主离线时，任意玩家也可以触发开始
+    const host = room.players.find(p => p.id === room.config.hostId);
+    if (host && !host.isOnline) {
+      const caller = room.players.find(p => p.id === playerId);
+      if (caller && !caller.isReady && caller.chips > 0) {
+        caller.isReady = true;
+        io.to(roomId).emit('room:player_ready_changed', {
+          playerId,
+          ready: true,
+          room: sanitizeRoom(room),
+        });
+      }
+    }
   }
 
   const started = tryStartGame(roomId, roomManager, io);
@@ -528,6 +543,7 @@ function handleGetState(playerId: string, roomManager: RoomManager): AIResponse 
     roomId,
     roomName: room.config.roomName,
     roomStatus: room.status,
+    hostId: room.config.hostId,
     variant: room.config.gameVariant,
     modifier: room.config.gameModifier,
     players: room.players.map(p => ({

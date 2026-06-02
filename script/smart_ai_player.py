@@ -20,13 +20,24 @@ Usage:
 
 import sys
 import io
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+import os
+
+if sys.platform == 'win32':
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    kernel32.SetConsoleOutputCP(65001)
+    kernel32.SetConsoleCP(65001)
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+else:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 import socketio
 import time
 import json
-import os
 import threading
 import random
 import argparse
@@ -207,6 +218,24 @@ AI_NAME_PREFIXES = ["AI", "Bot", "Bot"]
 AI_NAME_ADJS = ["暗影", "疾风", "烈焰", "寒冰", "雷霆", "星辰", "幻影", "铁壁", "灵狐", "苍龙",
                 "赤兔", "青龙", "白虎", "朱雀", "玄武", "麒麟", "凤凰", "鲲鹏", "独角兽", "猎鹰"]
 
+_STATE_FILE = os.path.join(_PROJECT_ROOT, ".ai_player_state.json")
+
+def _load_state():
+    if os.path.exists(_STATE_FILE):
+        try:
+            with open(_STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+def _save_state(state):
+    try:
+        with open(_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"  [WARN] 保存状态失败: {e}", flush=True)
+
 def generate_ai_name():
     prefix = random.choice(AI_NAME_PREFIXES)
     adj = random.choice(AI_NAME_ADJS)
@@ -216,11 +245,19 @@ def generate_ai_name():
 
 class SmartAIPlayer:
     def __init__(self, personality_key=None, custom_name=None):
+        saved_state = _load_state()
         if personality_key is None:
-            personality_key = random.choice(list(PERSONALITIES.keys()))
+            personality_key = saved_state.get("personality") or random.choice(list(PERSONALITIES.keys()))
         p = PERSONALITIES.get(personality_key, PERSONALITIES["shark"])
         self.personality_key = personality_key
-        self.name = custom_name or generate_ai_name()
+        if custom_name:
+            self.name = custom_name
+        elif saved_state.get("name"):
+            self.name = saved_state["name"]
+        else:
+            self.name = generate_ai_name()
+        self._saved_room_id = saved_state.get("roomId")
+        self._is_host = saved_state.get("isHost", False)
         self.personality = p["desc"]
         self.style = p["style"]
         self.sio = socketio.Client()
@@ -244,6 +281,7 @@ class SmartAIPlayer:
         self._big_win_last_hand = False
         self._big_loss_last_hand = False
         self._running = True
+        self._first_player_joined_at = None
 
         self._register_events()
 
@@ -299,6 +337,13 @@ class SmartAIPlayer:
             elif self._big_loss_last_hand and random.random() < 0.5:
                 threading.Thread(target=self._react_bad_beat, daemon=True).start()
 
+            # 输了就切换风格，赢了保持
+            if not i_won:
+                self._switch_personality()
+
+            # 重置倒计时，等下一手牌开始时重新计算
+            self._first_player_joined_at = None
+
         @self.sio.on("game:game_over", namespace=AI_NAMESPACE)
         def on_game_over(data):
             winner = data.get("winner", {})
@@ -319,6 +364,10 @@ class SmartAIPlayer:
             player = data.get("player", {})
             if player.get("name") != self.name:
                 self.log(f"👤 {player.get('name', '?')} 加入了房间")
+                if self._first_player_joined_at is None:
+                    self._first_player_joined_at = time.time()
+                    if self._is_host:
+                        self.log("⏳ 30秒后自动开始游戏...")
 
         @self.sio.on("room:player_left", namespace=AI_NAMESPACE)
         def on_player_left(data):
@@ -379,6 +428,7 @@ class SmartAIPlayer:
         resp = self.send_cmd("create-room", args)
         if resp and resp.get("ok"):
             self.room_id = resp.get("data", {}).get("roomId")
+            self._is_host = True
             self.log(f"创建房间: {self.room_id}")
         return resp
 
@@ -514,10 +564,16 @@ class SmartAIPlayer:
 回复JSON:
 {{"thinking": "你的思考过程", "discard_indices": [0, 2]}}
 discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表示不换牌。只回复JSON。"""
-            resp_text = self.llm.chat([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=150)
+            resp_text = self.llm.chat([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=200)
             if resp_text:
                 try:
                     cleaned = resp_text.replace("```json", "").replace("```", "").strip()
+                    if not cleaned.endswith("}"):
+                        last_brace = cleaned.rfind("}")
+                        if last_brace > 0:
+                            cleaned = cleaned[:last_brace+1]
+                        else:
+                            cleaned += "}"
                     data = json.loads(cleaned)
                     thinking = data.get("thinking", "")
                     indices = data.get("discard_indices", [])
@@ -588,12 +644,22 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
 操作: fold弃牌, check过牌, call跟注, raise加注(需amount), all-in全下
 只回复JSON。"""
 
-        resp_text = self.llm.chat([{"role": "user", "content": prompt}], temperature=0.7, max_tokens=250)
+        resp_text = self.llm.chat([{"role": "user", "content": prompt}], temperature=0.7, max_tokens=400)
         if not resp_text:
             return ("check" if "check" in valid_actions else "fold"), None
 
         try:
             cleaned = resp_text.replace("```json", "").replace("```", "").strip()
+            # 尝试修复被截断的JSON
+            if not cleaned.endswith("}"):
+                # 找到最后一个完整的key-value，补全
+                last_brace = cleaned.rfind("}")
+                if last_brace > 0:
+                    cleaned = cleaned[:last_brace+1]
+                else:
+                    # 尝试补全
+                    open_braces = cleaned.count("{") - cleaned.count("}")
+                    cleaned += "}" * max(open_braces, 1)
             data = json.loads(cleaned)
             thinking = data.get("thinking", "")
             action = data.get("action", "fold")
@@ -646,8 +712,8 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
 {instruction}
 只回复内容，不加引号。"""
 
-        temp = 0.95 if is_mentioned else 0.9
-        max_tok = 80 if is_mentioned else 60
+        temp = 0.7 if is_mentioned else 0.6
+        max_tok = 60 if is_mentioned else 40
         resp = self.llm.chat([{"role": "user", "content": prompt}], temperature=temp, max_tokens=max_tok)
         if resp and resp not in ('""', "", '""""'):
             cleaned = resp.strip().strip('"').strip("'")
@@ -683,12 +749,25 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
 
         prompt = f"{ctx}\n{trigger_prompts.get(trigger, trigger_prompts['idle'])}\n只回复内容。"
 
-        resp = self.llm.chat([{"role": "user", "content": prompt}], temperature=0.9, max_tokens=50)
+        resp = self.llm.chat([{"role": "user", "content": prompt}], temperature=0.7, max_tokens=40)
         if resp and resp not in ('""', "", '""""'):
             cleaned = resp.strip().strip('"').strip("'")
             if cleaned and not cleaned.startswith("ERROR") and len(cleaned) > 0:
                 return cleaned[:40]
         return None
+
+    def _switch_personality(self):
+        keys = list(PERSONALITIES.keys())
+        if len(keys) <= 1:
+            return
+        other_keys = [k for k in keys if k != self.personality_key]
+        new_key = random.choice(other_keys)
+        p = PERSONALITIES[new_key]
+        old_key = self.personality_key
+        self.personality_key = new_key
+        self.personality = p["desc"]
+        self.style = p["style"]
+        self.log(f"🎭 风格切换: {old_key} -> {new_key}")
 
     def _react_big_win(self):
         time.sleep(2 + random.random() * 2)
@@ -725,10 +804,10 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
                 if time.time() - self._last_chat_time < 8:
                     continue
             else:
-                if time.time() - self._last_chat_time < 15:
+                if time.time() - self._last_chat_time < 8:
                     continue
 
-            should_reply = is_mentioned or is_group_msg or random.random() < 0.2
+            should_reply = is_mentioned or is_group_msg or random.random() < 0.4
             if should_reply:
                 reply = self._llm_respond_to_chat(sender, msg, is_mentioned=is_mentioned)
                 if reply:
@@ -763,10 +842,25 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
         phase = data.get("phase")
         is_my_turn = data.get("isMyTurn")
 
+        my_role = None
         for p in data.get("players", []):
             if p.get("name") == self.name:
                 self.chips = p.get("chips", 0)
+                my_role = p.get("playerRoomRole", "")
                 break
+
+        if my_role == "busted":
+            self.log("💸 破产了，补筹码...")
+            resp = self.send_cmd("get-chips")
+            if resp and resp.get("ok"):
+                amount = resp.get("data", {}).get("amount", 0)
+                self.log(f"💰 补充了 ${amount}")
+                self.ready()
+            else:
+                err = resp.get("error", "") if resp else "no response"
+                self.log(f"补码失败: {err}，选择观战")
+                self.send_cmd("decline-rebuy")
+            return True
 
         if phase in ("waiting", "ended", "run-it-twice-choice", "run-it-twice-dice", "run-it-twice-executing"):
             return True
@@ -829,11 +923,34 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
 
         my_role = None
         my_ready = False
+        player_count = 0
+        host_id = state.get("hostId", "")
+        host_online = True
         for p in state.get("players", []):
             if p.get("name") == self.name:
                 my_role = p.get("playerRoomRole", "")
                 my_ready = p.get("isReady", False)
-                break
+            if p.get("playerRoomRole") not in ("spectator",):
+                player_count += 1
+            if p.get("id") == host_id:
+                host_online = p.get("isOnline", True)
+
+        # 房主断线 → 离开并新建房间
+        if not host_online and my_role != "spectator":
+            self.log("👑 房主已断线，离开房间...")
+            resp = self.send_cmd("leave-room")
+            time.sleep(1)
+            self.room_id = None
+            self._is_host = True
+            self._first_player_joined_at = None
+            resp = self.create_room()
+            if resp and resp.get("ok"):
+                self.log(f"🏠 新建房间: {self.room_id}")
+                _save_state({"name": self.name, "personality": self.personality_key, "roomId": self.room_id, "isHost": True})
+                self.ready()
+            else:
+                self.log(f"新建房间失败")
+            return
 
         if my_role == "busted":
             self.log("💸 破产了，补筹码...")
@@ -845,8 +962,38 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
             my_ready = False
 
         if not my_ready and my_role != "spectator":
-            self.ready()
-            self.log("✋ 已准备")
+            resp = self.ready()
+            if resp and resp.get("ok"):
+                self.log("✋ 已准备")
+            else:
+                err = resp.get("error", "") if resp else "no response"
+                self.log(f"⚠ 准备失败: {err} (role={my_role})")
+
+        # 自动开始倒计时：有2+活跃玩家且房间在等待
+        if player_count >= 2:
+            if self._first_player_joined_at is None:
+                self._first_player_joined_at = time.time()
+                self.log(f"⏳ 已有{player_count}人，30秒后开始游戏...")
+            elapsed = time.time() - self._first_player_joined_at
+            remaining = int(30 - elapsed)
+            if remaining <= 0:
+                self.log("🎮 倒计时结束，开始游戏！")
+                resp = self.send_cmd("start-game")
+                if resp and resp.get("ok"):
+                    self._first_player_joined_at = None
+                else:
+                    err = resp.get("error", "") if resp else ""
+                    self.log(f"开始失败: {err}")
+                    self._first_player_joined_at = time.time()
+            elif remaining % 5 == 0:
+                last_log_remaining = getattr(self, '_last_countdown_log', -1)
+                if remaining != last_log_remaining:
+                    self._last_countdown_log = remaining
+                    self.log(f"⏳ 还有{remaining}秒开始游戏...")
+        elif self._first_player_joined_at is not None:
+            # 玩家离开了，重置倒计时
+            self._first_player_joined_at = None
+            self.log("⏳ 玩家不足，暂停倒计时")
 
         self._process_chats(state)
 
@@ -928,6 +1075,18 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
 
         joined = False
 
+        # 优先尝试上次保存的房间
+        if not room_id and self._saved_room_id:
+            self.log(f"🔄 尝试重连上次房间: {self._saved_room_id}")
+            resp = self.join_room(self._saved_room_id)
+            if resp and resp.get("ok"):
+                joined = True
+                self.log("✅ 重连成功！")
+                time.sleep(1)
+            else:
+                self.log("重连失败，将查找其他房间")
+                self._saved_room_id = None
+
         if room_id:
             resp = self.join_room(room_id)
             if resp and resp.get("ok"):
@@ -965,6 +1124,9 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
             print(f"\n  📍 房间ID: {self.room_id}")
             print(f"  🔗 其他玩家可搜索此ID加入\n")
 
+        # 保存状态以便断线重连
+        _save_state({"name": self.name, "personality": self.personality_key, "roomId": self.room_id, "isHost": self._is_host})
+
         self.ready()
 
         poll_interval = 2.0
@@ -982,6 +1144,12 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
                     state = self.get_state()
                     if state:
                         room_status = state.get("roomStatus", "")
+                        my_role = next((p.get("playerRoomRole", "") for p in state.get("players", []) if p.get("name") == self.name), "?")
+                        player_count = sum(1 for p in state.get("players", []) if p.get("playerRoomRole") not in ("spectator",))
+                        state_key = f"{room_status}|{my_role}|{player_count}|{self._is_host}"
+                        if state_key != getattr(self, '_last_state_key', ''):
+                            self._last_state_key = state_key
+                            self.log(f"[状态] room={room_status} role={my_role} players={player_count} host={self._is_host}")
                         if room_status == "playing":
                             self.play_turn(state)
                             if now - last_chat_check >= chat_check_interval:
@@ -990,6 +1158,9 @@ discard_indices是要丢弃的牌的索引列表（从0开始）。空列表表�
                                 self._maybe_spontaneous_chat(state)
                         else:
                             self.handle_lobby_state()
+                            if now - last_chat_check >= chat_check_interval:
+                                last_chat_check = now
+                                self._process_chats(state)
 
         except KeyboardInterrupt:
             self.log("用户中断，退出...")

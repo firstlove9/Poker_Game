@@ -273,5 +273,5 @@ export function setupWebSocket(io: Server, roomManager: RoomManager): void {
   setInterval(() => {
     checkAIIdle(io, roomManager);
     checkRoomAutoClose(io, roomManager);
-  }, 60 * 1000);
+  }, 10 * 1000);
 }
