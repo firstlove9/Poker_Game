@@ -361,7 +361,7 @@ sio.emit('ai:cmd', {
 
 ### 7. `start-game` — 开始游戏
 
-开始游戏（仅房主可调用）。如果房主未准备，会自动准备。
+开始游戏。房主可调用；当房主离线时，任意玩家也可调用。如果调用者未准备，会自动准备。
 
 **参数**：无
 
@@ -472,6 +472,7 @@ sio.emit('ai:cmd', {
 | `players[].isAfk` | boolean | 是否挂机 |
 | `players[].playerRoomRole` | string | 房间角色：`active` / `busted` / `spectator` / `seated` |
 | `lastResult` | object | 上一局结果（仅牌局结束后存在） |
+| `hostId` | string | 房主玩家ID |
 
 > `discard` 阶段仅出现在 `pineapple`（大菠萝）变体中，玩家需选择弃掉一张底牌。
 
@@ -1041,6 +1042,100 @@ sio.emit('ai:cmd', {
 
 ---
 
+### 21. `draw` — 换牌
+
+在五张换牌（Five Card Draw）变体中，换牌阶段替换选定的底牌。
+
+**参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `indices` | string | **是** | 要替换的底牌索引列表（0-based，逗号分隔），或 `"none"` 表示不换牌 |
+
+**请求示例**：
+```json
+{ "cmd": "draw", "args": { "indices": "0,2,4" } }
+```
+```json
+{ "cmd": "draw", "args": { "indices": "none" } }
+```
+
+**响应示例**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "discardedCount": 3, "drawnCount": 3 },
+  "log": "Drew 3 cards"
+}
+```
+
+**错误场景**：
+- `400` — 不在任何房间 / 无效索引 / 不在换牌阶段
+- `409` — 非你的回合 / 不在 draw 阶段
+
+---
+
+### 22. `show-cards` — 摊牌亮牌
+
+在奥马哈（Omaha）变体摊牌阶段，亮出你的底牌组合。
+
+**参数**：无
+
+**请求示例**：
+```json
+{ "cmd": "show-cards", "args": {} }
+```
+
+**响应示例**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": null,
+  "log": "Cards shown"
+}
+```
+
+**错误场景**：
+- `400` — 不在任何房间 / 无活跃游戏
+- `409` — 不在摊牌阶段 / 已亮过牌
+
+---
+
+### 23. `discard` — 弃底牌
+
+在大菠萝（Pineapple/Crazy Pineapple）变体的弃牌阶段，弃掉一张底牌。
+
+**参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `cardIndex` | number | **是** | 要弃掉的底牌索引（0-based） |
+
+**请求示例**：
+```json
+{ "cmd": "discard", "args": { "cardIndex": 0 } }
+```
+
+**响应示例**：
+```json
+{
+  "ok": true,
+  "code": 0,
+  "data": { "discardedCard": { "suit": "clubs", "rank": "2" } },
+  "log": "Discarded card at index 0"
+}
+```
+
+**错误场景**：
+- `400` — 不在任何房间 / 无效索引 / 不在弃牌阶段
+- `409` — 非你的回合
+
+> 也可通过 `action` 命令的 `discard` 操作实现相同功能：`action { "action": "discard", "amount": 0 }`。
+
+---
+
 ## 游戏变体一览
 
 | 变体ID | 名称 | 底牌数 | 公共牌数 | 牌桌数 | 下注类型 | 最大人数 | 凑牌方式 |
@@ -1217,6 +1312,34 @@ AI 客户端除了主动发送指令外，还需要监听以下服务端推送�
 }
 ```
 
+### `game:run_it_twice_ask` — 跑马选择请求
+
+当两人全下（heads-up all-in）时，服务端询问玩家是否选择跑马（run it twice）。
+
+**事件数据**：
+```json
+{
+  "players": [
+    { "id": "ai_xxx", "name": "AI_Player" },
+    { "id": "player_yyy", "name": "Human" }
+  ]
+}
+```
+
+> 收到此事件后，AI 应调用 `run-it-twice-choice` 命令选择 `once` 或 `twice`。
+
+### `room:closed` — 房间关闭
+
+当房间内所有玩家离线超过30秒后，房间自动关闭。
+
+**事件数据**：
+```json
+{
+  "roomId": "XYZ789",
+  "reason": "所有玩家已离线，房间自动关闭"
+}
+```
+
 ---
 
 ## 典型流程
@@ -1287,4 +1410,8 @@ AI 客户端断开连接时：
 9. **Heads-up 行动顺序**：当场上只剩2名活跃玩家时，进入 heads-up 模式：
    - **Preflop**：Dealer（小盲）先行动 → 大盲后行动
    - **Flop / Turn / River**：大盲先行动 → Dealer 后行动
-10. **大菠萝弃牌阶段**：`pineapple` 变体中，发牌后进入 `discard` 阶段，玩家必须弃掉1张底牌。此时 `validActions` 中包含 `discard`，需要通过 `action { action: "discard", amount: <索引> }` 执行
+10. **大菠萝弃牌阶段**：`pineapple` 变体中，发牌后进入 `discard` 阶段，玩家必须弃掉1张底牌。可通过 `action { action: "discard", amount: <索引> }` 或独立指令 `discard { cardIndex: <索引> }` 执行
+11. **房主离线机制**：当房主离线时，任意玩家都可以调用 `start-game` 开始游戏。`get-state` 返回的 `hostId` 字段可判断房主身份，`players[].isOnline` 可判断房主是否在线
+12. **房间自动关闭**：当房间内所有玩家离线超过30秒后，房间自动关闭，所有客户端会收到 `room:closed` 事件
+13. **跑马选择**：两人全下时进入 `run-it-twice-choice` 阶段，AI 应调用 `run-it-twice-choice` 命令选择 `once` 或 `twice`
+14. **换牌阶段**：`five_card_draw` 变体中，发牌后进入 `draw` 阶段，通过 `draw` 命令指定要替换的底牌索引

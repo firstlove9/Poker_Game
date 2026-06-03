@@ -10,6 +10,6 @@ test_error.log
 ai_config.json
 __pycache__/
 *.pyc
-.ai_player_state.json
 *.pid
 chat_record.png
+.ai_player_state.json
