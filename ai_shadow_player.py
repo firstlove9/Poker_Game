@@ -1626,28 +1626,41 @@ class AggressivePokerAI:
         time.sleep(1)
         return self.find_and_join_room()
 
+    def _try_connect(self, transports=None):
+        """尝试连接服务器，支持指定传输方式"""
+        if transports is None:
+            transports = ['websocket']
+        self.log(f'尝试连接 (传输方式: {"+".join(transports)})...')
+        self.sio.connect(CONNECT_URL, namespaces=[AI_NAMESPACE],
+                         socketio_path='socket.io',
+                         transports=transports,
+                         wait_timeout=15)
+
     def run(self):
         self.log('=== 老树的AI影子 启动 ===')
         self.log(f'连接至 {SERVER_URL}')
 
-        try:
-            self.log(f'正在连接到: {CONNECT_URL}')
-            self.sio.connect(CONNECT_URL, namespaces=[AI_NAMESPACE],
-                             socketio_path='socket.io',
-                             transports=['websocket'],
-                             wait_timeout=15)
-        except Exception as e:
-            self.log(f'连接失败: {e}')
-            self.log('5秒后重试...')
-            time.sleep(5)
+        # 尝试多种传输方式，websocket 不行就换 polling
+        connect_ok = False
+        transport_attempts = [
+            ['websocket'],
+            ['polling'],
+            ['polling', 'websocket'],
+        ]
+        for transports in transport_attempts:
+            if connect_ok:
+                break
             try:
-                self.sio.connect(CONNECT_URL, namespaces=[AI_NAMESPACE],
-                                 socketio_path='socket.io',
-                                 transports=['websocket'],
-                                 wait_timeout=15)
-            except Exception as e2:
-                self.log(f'再次连接失败: {e2}')
-                return
+                self.log(f'正在连接到: {CONNECT_URL}')
+                self._try_connect(transports)
+                connect_ok = True
+            except Exception as e:
+                self.log(f'连接失败 ({"+".join(transports)}): {e}')
+                time.sleep(2)
+
+        if not connect_ok:
+            self.log('❌ 所有传输方式均连接失败，请检查网络或服务器状态')
+            return
 
         time.sleep(1)
 
