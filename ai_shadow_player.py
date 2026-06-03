@@ -21,17 +21,31 @@ import ai_llm_client as llm
 
 LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'.{os.path.basename(__file__)}.pid')
 
+def _check_process_by_pid(pid):
+    """跨平台检查进程是否存在"""
+    try:
+        if sys.platform == 'win32':
+            import subprocess
+            r = subprocess.run(['tasklist', '/FI', f'PID eq {pid}', '/NH'],
+                               capture_output=True, text=True, timeout=5)
+            return str(pid) in r.stdout
+        else:
+            # macOS/Linux: 使用 os.kill 或 ps
+            import subprocess
+            r = subprocess.run(['ps', '-p', str(pid), '-o', 'pid='],
+                               capture_output=True, text=True, timeout=5)
+            return r.returncode == 0
+    except Exception:
+        return False
+
 def _prevent_duplicate():
-    import subprocess
     try:
         with open(LOCK_FILE, 'r') as f:
             old_pid = int(f.read().strip())
-        if old_pid != os.getpid():
-            r = subprocess.run(['tasklist', '/FI', f'PID eq {old_pid}', '/NH'], capture_output=True, text=True, timeout=5)
-            if str(old_pid) in r.stdout:
-                print(f'[{datetime.now().strftime("%H:%M:%S")}] 旧进程(PID:{old_pid})仍在运行，退出')
-                sys.exit(0)
-    except (FileNotFoundError, ValueError, subprocess.TimeoutExpired):
+        if old_pid != os.getpid() and _check_process_by_pid(old_pid):
+            print(f'[{datetime.now().strftime("%H:%M:%S")}] 旧进程(PID:{old_pid})仍在运行，退出')
+            sys.exit(0)
+    except (FileNotFoundError, ValueError):
         pass
     except Exception:
         pass
@@ -55,7 +69,8 @@ atexit.register(_cleanup_lock)
 SERVER_URL = 'https://dp.geeknest.cc:5432'
 AI_NAMESPACE = '/ai'
 PLAYER_NAME = '老树AI影子'
-POLL_INTERVAL = 0.8
+POLL_INTERVAL = 1.5        # 正常对局轮询间隔(秒)
+IDLE_INTERVAL = 4.0       # 等待房间时的轮询间隔(秒)，节能模式
 ENCODED_NAME = urllib.parse.quote(PLAYER_NAME)
 CONNECT_URL = f'{SERVER_URL}?name={ENCODED_NAME}'
 
@@ -1406,8 +1421,8 @@ class AggressivePokerAI:
             self.log('=== 查找可加入的房间 ===')
             rooms_resp = self.list_rooms()
             if not rooms_resp or not rooms_resp.get('ok'):
-                self.log('查询房间失败，3秒后重试')
-                time.sleep(3)
+                self.log('查询房间失败，5秒后重试')
+                time.sleep(5)
                 continue
 
             room_list = rooms_resp.get('data', {}).get('rooms', [])
@@ -1424,7 +1439,7 @@ class AggressivePokerAI:
 
             if not candidates:
                 self.log(f'没有可加入的房间（黑名单: {len(self.tried_rooms)}间）')
-                time.sleep(3)
+                time.sleep(5)
                 continue
 
             for r in candidates:
@@ -1559,7 +1574,7 @@ class AggressivePokerAI:
                     time.sleep(0.5)
 
             self.log('本轮所有房间均不可用，重新查询...')
-            time.sleep(3)
+            time.sleep(5)
 
         return False
 
@@ -1730,7 +1745,7 @@ class AggressivePokerAI:
                                 break
                             continue
                         handled = self.handle_busted_or_spectator(sd)
-                        self.wait_loop(POLL_INTERVAL * 2)
+                        self.wait_loop(IDLE_INTERVAL)
                         continue
                     else:
                         waiting_since = None
@@ -1778,10 +1793,10 @@ class AggressivePokerAI:
 
                     if room_status not in ('playing', 'waiting', 'ended'):
                         self.log(f'⚠️ 未知房间状态: {room_status}')
-                        self.wait_loop(POLL_INTERVAL * 2)
+                        self.wait_loop(IDLE_INTERVAL)
                 else:
                     self._poll_chat()
-                    self.wait_loop(POLL_INTERVAL * 2)
+                    self.wait_loop(IDLE_INTERVAL)
 
             except KeyboardInterrupt:
                 self.log('用户中断')
