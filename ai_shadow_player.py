@@ -1650,7 +1650,12 @@ class AggressivePokerAI:
                 kwargs['ssl'] = ctx
             except Exception:
                 pass
-        self.sio.connect(CONNECT_URL, **kwargs)
+        try:
+            self.sio.connect(CONNECT_URL, **kwargs)
+        except TypeError:
+            # socketio v5 不支持 ssl 参数，去掉重试
+            kwargs.pop('ssl', None)
+            self.sio.connect(CONNECT_URL, **kwargs)
 
     def run(self):
         self.log('=== 老树的AI影子 启动 ===')
