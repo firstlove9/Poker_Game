@@ -16,6 +16,7 @@ import urllib.parse
 import signal
 import atexit
 import os
+import ssl
 from datetime import datetime
 import ai_llm_client as llm
 
@@ -1635,11 +1636,21 @@ class AggressivePokerAI:
         if transports is None:
             transports = ['websocket']
         self.log(f'尝试连接 (传输方式: {"+".join(transports)}, SSL验证: {ssl_verify})...')
-        self.sio.connect(CONNECT_URL, namespaces=[AI_NAMESPACE],
-                         socketio_path='socket.io',
-                         transports=transports,
-                         ssl_verify=ssl_verify,
-                         wait_timeout=15)
+        kwargs = {
+            'namespaces': [AI_NAMESPACE],
+            'socketio_path': 'socket.io',
+            'transports': transports,
+            'wait_timeout': 15,
+        }
+        if not ssl_verify:
+            try:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                kwargs['ssl'] = ctx
+            except Exception:
+                pass
+        self.sio.connect(CONNECT_URL, **kwargs)
 
     def run(self):
         self.log('=== 老树的AI影子 启动 ===')
