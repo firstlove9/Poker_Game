@@ -224,18 +224,7 @@ class AggressivePokerAI:
         self.player_name = PLAYER_NAME
         self._speaker_msgs = {}
 
-        self.sio.on('ai:connected', self.on_connected, namespace=AI_NAMESPACE)
-        self.sio.on('chat:message', self.on_chat_message, namespace=AI_NAMESPACE)
-        self.sio.on('connect', self.on_raw_connect, namespace=AI_NAMESPACE)
-        self.sio.on('disconnect', self.on_disconnect, namespace=AI_NAMESPACE)
-        self.sio.on('connect_error', self.on_connect_error, namespace=AI_NAMESPACE)
-        self.sio.on('game:your_turn', self.on_your_turn, namespace=AI_NAMESPACE)
-        self.sio.on('game:state_changed', self.on_state_changed, namespace=AI_NAMESPACE)
-        self.sio.on('game:hand_started', self.on_hand_started, namespace=AI_NAMESPACE)
-        self.sio.on('game:hand_ended', self.on_hand_ended, namespace=AI_NAMESPACE)
-        self.sio.on('game:hand_result', self.on_hand_ended, namespace=AI_NAMESPACE)
-        self.sio.on('game:showdown', self.on_hand_ended, namespace=AI_NAMESPACE)
-        self.sio.on('game:game_over', self.on_game_over, namespace=AI_NAMESPACE)
+        self._register_handlers()
 
         self._chat_poll_enabled = True
         self._last_chat_poll_time = 0
@@ -249,11 +238,26 @@ class AggressivePokerAI:
     def on_raw_connect(self):
         self.log('Raw socket connected to /ai namespace')
 
+    def _register_handlers(self):
+        """注册socket.io事件处理器（断线重建后需重新调用）"""
+        self.sio.on('ai:connected', self.on_connected, namespace=AI_NAMESPACE)
+        self.sio.on('chat:message', self.on_chat_message, namespace=AI_NAMESPACE)
+        self.sio.on('connect', self.on_raw_connect, namespace=AI_NAMESPACE)
+        self.sio.on('disconnect', self.on_disconnect, namespace=AI_NAMESPACE)
+        self.sio.on('connect_error', self.on_connect_error, namespace=AI_NAMESPACE)
+        self.sio.on('game:your_turn', self.on_your_turn, namespace=AI_NAMESPACE)
+        self.sio.on('game:state_changed', self.on_state_changed, namespace=AI_NAMESPACE)
+        self.sio.on('game:hand_started', self.on_hand_started, namespace=AI_NAMESPACE)
+        self.sio.on('game:hand_ended', self.on_hand_ended, namespace=AI_NAMESPACE)
+        self.sio.on('game:hand_result', self.on_hand_ended, namespace=AI_NAMESPACE)
+        self.sio.on('game:showdown', self.on_hand_ended, namespace=AI_NAMESPACE)
+        self.sio.on('game:game_over', self.on_game_over, namespace=AI_NAMESPACE)
+
     def on_disconnect(self):
         self.log('Disconnected from /ai namespace')
 
     def on_connect_error(self, data):
-        self.log(f'Connection error: {data}')
+        self.log(f'连接错误: {data}')
 
     def on_your_turn(self, data):
         self.my_turn = True
@@ -1626,37 +1630,47 @@ class AggressivePokerAI:
         time.sleep(1)
         return self.find_and_join_room()
 
-    def _try_connect(self, transports=None):
-        """尝试连接服务器，支持指定传输方式"""
+    def _try_connect(self, transports=None, ssl_verify=True):
+        """尝试连接服务器，支持指定传输方式和SSL设置"""
         if transports is None:
             transports = ['websocket']
-        self.log(f'尝试连接 (传输方式: {"+".join(transports)})...')
+        self.log(f'尝试连接 (传输方式: {"+".join(transports)}, SSL验证: {ssl_verify})...')
         self.sio.connect(CONNECT_URL, namespaces=[AI_NAMESPACE],
                          socketio_path='socket.io',
                          transports=transports,
+                         ssl_verify=ssl_verify,
                          wait_timeout=15)
 
     def run(self):
         self.log('=== 老树的AI影子 启动 ===')
         self.log(f'连接至 {SERVER_URL}')
 
-        # 尝试多种传输方式，websocket 不行就换 polling
+        # 尝试多种连接组合
         connect_ok = False
-        transport_attempts = [
-            ['websocket'],
-            ['polling'],
-            ['polling', 'websocket'],
+        attempts = [
+            {'transports': ['websocket'], 'ssl_verify': True},
+            {'transports': ['websocket'], 'ssl_verify': False},
+            {'transports': ['polling'], 'ssl_verify': True},
+            {'transports': ['polling'], 'ssl_verify': False},
+            {'transports': ['polling', 'websocket'], 'ssl_verify': False},
         ]
-        for transports in transport_attempts:
+        for opts in attempts:
             if connect_ok:
                 break
             try:
                 self.log(f'正在连接到: {CONNECT_URL}')
-                self._try_connect(transports)
+                self._try_connect(**opts)
                 connect_ok = True
             except Exception as e:
-                self.log(f'连接失败 ({"+".join(transports)}): {e}')
-                time.sleep(2)
+                self.log(f'连接失败 ({opts}): {e}')
+                # 重建client以清除状态（SSL设置变更需要新client）
+                try:
+                    self.sio.disconnect()
+                except Exception:
+                    pass
+                self.sio = socketio.Client(reconnection=True, reconnection_attempts=0, reconnection_delay=2)
+                self._register_handlers()
+                time.sleep(1)
 
         if not connect_ok:
             self.log('❌ 所有传输方式均连接失败，请检查网络或服务器状态')
