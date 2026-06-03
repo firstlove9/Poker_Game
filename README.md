@@ -8,8 +8,11 @@
 - 🏠 **私人服务器**: 可部署在家庭电脑，邀请好友加入
 - 💰 **无限筹码**: 随时补充筹码，无压力娱乐
 - 📊 **详细结算**: 每局结束显示详细获胜说明
-- 💬 **实时聊天**: 游戏内聊天功能
+- 💬 **实时聊天**: 游戏内聊天功能，支持 @提及
 - 🎨 **精美界面**: 专业的扑克桌设计风格
+- 🤖 **AI 玩家**: LLM 驱动的 AI 玩家，可自动加入房间、做决策、聊天互动
+- 🎲 **18种变体**: 常规德州、奥马哈、短牌、大菠萝、五张换牌、鱿鱼系列等
+- 🃏 **6种修饰器**: 炸弹池、免弃牌、跟到底、大小盲梭哈等
 
 ## 🚀 快速开始
 
@@ -123,6 +126,13 @@ texas-poker-game/
 │   │   ├── stores/      # 状态管理
 │   │   └── App.tsx
 │   └── package.json
+├── script/              # AI 玩家脚本 & 测试工具
+│   ├── smart_ai_player.py  # LLM 驱动的 AI 玩家
+│   ├── test_ai_interface.py # AI 接口测试脚本
+│   └── ...
+├── doc/                 # 文档
+│   ├── ai_interface.md  # AI 接口文档
+│   └── player_state_machine.md  # 玩家状态机设计
 ├── shared/              # 共享类型定义
 └── docker-compose.yml   # Docker部署配置
 ```
@@ -156,6 +166,89 @@ texas-poker-game/
 5. 经过翻牌、转牌、河牌阶段
 6. 摊牌结算，显示获胜者及牌型
 
+## 🤖 AI 玩家
+
+本项目支持通过 WebSocket AI 接口接入 LLM 驱动的 AI 玩家，自动参与牌局并聊天互动。
+
+### 快速启动 AI 玩家
+
+```bash
+# 1. 安装 Python 依赖
+pip install python-socketio[client] openai
+
+# 2. 配置 LLM
+# 在项目根目录创建 llm_config.json
+{
+  "LLM_API_KEY": "your-api-key",
+  "LLM_BASE_URL": "https://api.openai.com/v1",
+  "LLM_MODEL": "gpt-4o-mini"
+}
+
+# 3. 启动 AI 玩家（自动查找或创建房间）
+python script/smart_ai_player.py
+
+# 4. 指定房间加入
+python script/smart_ai_player.py --room ABC123
+
+# 5. 指定名字和个性
+python script/smart_ai_player.py --name "AI_烈焰" --personality gambler
+```
+
+### AI 玩家特性
+
+| 特性 | 说明 |
+|------|------|
+| **5种个性** | shark(鲨鱼) / gambler(赌神) / fox(狐狸) / prof(教授) / rookie(新手) |
+| **LLM决策** | 综合手牌强度、底池赔率、对手建模做出决策 |
+| **聊天互动** | 回应 @提及，主动发表评论，大赢/大输时反应 |
+| **风格切换** | 输了自动切换个性，赢了保持当前风格 |
+| **断线重连** | 自动保存状态，重连后恢复名字和房间 |
+| **自动补码** | 筹码耗尽后自动补充 |
+| **跑马处理** | 自动选择不跑马（once），避免牌局卡住 |
+
+### AI WebSocket 接口
+
+AI 通过 `/ai` namespace 的 WebSocket 连接，使用 CLI 风格指令协议：
+
+```python
+import socketio
+
+sio = socketio.Client()
+sio.connect('http://localhost:3000', namespaces=['/ai'])
+
+# 发送指令
+sio.emit('ai:cmd', {
+    'cmd': 'join-room',
+    'args': {'roomId': 'ABC123', 'name': 'MyBot'},
+    'reqId': 'req_001'
+}, namespace='/ai', callback=on_response)
+```
+
+**常用指令**：
+
+| 指令 | 说明 |
+|------|------|
+| `create-room` | 创建房间 |
+| `join-room` | 加入房间 |
+| `ready` | 准备 |
+| `start-game` | 开始游戏 |
+| `get-state` | 获取牌局状态（含底牌） |
+| `action` | 执行行动（fold/check/call/raise/all-in） |
+| `chat` | 发送聊天 |
+| `get-chips` | 破产补充筹码 |
+| `run-it-twice-choice` | 跑马选择 |
+| `draw` | 换牌（Five Card Draw） |
+| `discard` | 弃底牌（Pineapple） |
+
+完整的接口文档见 [doc/ai_interface.md](doc/ai_interface.md)。
+
+### AI 接口测试
+
+```bash
+# 运行接口测试脚本
+python script/test_ai_interface.py
+```
+
 ## 🛠️ 技术栈
 
 ### 后端
@@ -182,6 +275,14 @@ texas-poker-game/
 - [x] 前端界面
 - [x] 详细结算展示
 - [x] Docker部署
+- [x] AI 玩家接口（WebSocket /ai namespace）
+- [x] LLM 驱动的 AI 玩家（5种个性、聊天互动、风格切换）
+- [x] 18种游戏变体（德州、奥马哈、短牌、大菠萝、五张换牌、鱿鱼系列等）
+- [x] 6种游戏修饰器（炸弹池、免弃牌、跟到底等）
+- [x] 聊天 @提及功能
+- [x] 房主离线时任意玩家可开始游戏
+- [x] 房间自动关闭（所有玩家离线30秒）
+- [x] 玩家状态机（SPECTATOR/SEATED/ACTIVE/BUSTED）
 - [ ] 语音聊天
 - [ ] 游戏历史统计
 - [ ] 战绩排行榜
