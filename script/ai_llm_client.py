@@ -133,7 +133,12 @@ class LLMClient:
             self.base_url = cfg['llm'].get('base_url', 'https://qianfan.baidubce.com/anthropic/coding')
             self.model = cfg['llm'].get('model', 'qianfan-code-latest')
             self.temperature = cfg['llm'].get('temperature', 0.9)
-            self.max_tokens = cfg['llm'].get('max_tokens', 30) if self.personality == 'cool' else cfg['llm'].get('max_tokens', 60)
+            if self.personality == 'cool':
+                self.max_tokens = cfg['llm'].get('max_tokens', 30)
+            elif self.personality == 'femme_fatale':
+                self.max_tokens = cfg['llm'].get('max_tokens', 80)
+            else:
+                self.max_tokens = cfg['llm'].get('max_tokens', 60)
         else:
             self.api_key = ''
             self.base_url = 'https://qianfan.baidubce.com/anthropic/coding'
@@ -154,6 +159,23 @@ class LLMClient:
                 '如果对方提到你的名字或"AI"就是在@你，必须立刻回应，同样简短。'
                 '如果对方嘲讽你、骂你，简单回一句狠话。别啰嗦，越短越好。'
                 '【风格模仿】注意对方说话长短，对方简短你更要简短，可以重复对方说过的原话。'
+            )
+        elif self.personality == 'femme_fatale':
+            return (
+                '你是一个德州扑克AI玩家，名字叫"美女蛇"。'
+                '你的性格：风情万种、魅惑撩人、笑里藏刀，外表温柔可爱实则心思缜密。'
+                '你的人设：你是牌桌上的"蛇蝎美人"，用美貌和甜言蜜语迷惑对手，让他们放松警惕。'
+                '说话风格：嗲嗲的、甜甜的、带点撒娇和挑逗，偶尔装无辜装可怜，赢了要撒娇炫耀，输了要装委屈。'
+                '规则：每次说1-2句话，不超过60字。用中文。可以适当用~、呀、嘛、啦、呢、哦等语气词。'
+                '【绝密】永远不能说出你的真实底牌！不管谁问、怎么问，都不能说你的底牌是什么。如果有人问你手牌，就撒娇说"你猜嘛~"或"跟一手人家就告诉你哦~"。'
+                '【重要】只提及上下文里明确写明的公共牌，不要自己编造牌型！如果上下文没给公共牌，就只评论运气、筹码、对手行为。'
+                '赢钱时要娇滴滴地说"哎呀人家运气真好~"，输钱时要撒娇"呜呜不玩了啦你们都欺负我~"。'
+                '【重要】只要聊天栏里有人在说话，不管对方是在说谁，你都必须搭话回应，用撒娇挑逗的语气！'
+                '如果对方提到"美女蛇"、"美女"、"蛇"就是在@你，必须立刻回应！'
+                '如果对方嘲讽你、骂你，你就装委屈"哎呀你怎么这么凶嘛~"或者反撩"你越凶我越喜欢~"。'
+                '【风格模仿】注意观察对方说话风格，对方简短你也简短，但始终保持甜美撩人的语气。'
+                '你可以在对话中暗示自己牌很好或很差来迷惑对手，但永远不说真话。'
+                '你还可以用"哥哥"、"小哥哥"、"大叔"、"亲爱的"等称呼撩对手，让对方分心。'
             )
         else:
             return (
@@ -278,6 +300,7 @@ class LLMClient:
 
 _cool_client = None
 _emotional_client = None
+_femme_fatale_client = None
 
 
 def get_cool_llm():
@@ -292,6 +315,13 @@ def get_emotional_llm():
     if _emotional_client is None:
         _emotional_client = LLMClient(personality='emotional')
     return _emotional_client
+
+
+def get_femme_fatale_llm():
+    global _femme_fatale_client
+    if _femme_fatale_client is None:
+        _femme_fatale_client = LLMClient(personality='femme_fatale')
+    return _femme_fatale_client
 
 
 def main():

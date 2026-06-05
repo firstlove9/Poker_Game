@@ -15,6 +15,24 @@ import os
 from datetime import datetime
 import ai_llm_client as llm
 
+# === 人格配置 ===
+PERSONA_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ai_persona.json')
+
+def _load_persona():
+    default = {'persona': 'emotional', 'name': '影子AI陪练'}
+    try:
+        if os.path.exists(PERSONA_CONFIG_FILE):
+            with open(PERSONA_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            persona = cfg.get('persona', 'emotional')
+            name = cfg.get('name', '影子AI陪练')
+            return persona, name
+    except Exception:
+        pass
+    return default['persona'], default['name']
+
+PERSONA, PLAYER_NAME = _load_persona()
+
 LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'.{os.path.basename(__file__)}.pid')
 
 def _prevent_duplicate():
@@ -50,7 +68,6 @@ atexit.register(_cleanup_lock)
 
 SERVER_URL = 'https://dp.geeknest.cc:5432'
 AI_NAMESPACE = '/ai'
-PLAYER_NAME = '影子AI陪练'
 ENCODED_NAME = urllib.parse.quote(PLAYER_NAME)
 CONNECT_URL = f'{SERVER_URL}?name={ENCODED_NAME}'
 POLL_INTERVAL = 0.8
@@ -103,9 +120,21 @@ last_hand_ended = None
 chips_before_hand = 0
 running = True
 _last_hand_id = ''
+_last_hand_my_action = ''  # 最后一手牌AI执行的动作（fold/call/raise/check/all-in）
 game_state = {}
 _recent_sparring_chats = []
+_player_msg_times = {}  # 记录每个玩家消息时间戳，用于检测AI
+_suspected_ai_players = set()  # 疑似AI的玩家集合
+_conversation_chain = []  # 追踪最近几条对话，判断是否真人之间聊天
+_last_chat_sender = None  # 上一条聊天消息的发送者
 emotional_llm = llm.get_emotional_llm()
+femme_fatale_llm = llm.get_femme_fatale_llm()
+
+# 根据配置选择当前人格的LLM
+if PERSONA == 'femme_fatale':
+    active_llm = femme_fatale_llm
+else:
+    active_llm = emotional_llm
 
 EMOTIONAL_CHATS = {
     'win': ['哇哈哈哈！我太厉害了！', '这把赢得漂亮！', '怎么样，服不服！', '太简单了啦！', '啊啊啊我好强！'],
@@ -125,6 +154,27 @@ EMOTIONAL_CHATS = {
     'raise': ['加注！敢不敢跟！', '跟不跟？不跟算你怂！', '来呀互相伤害呀！'],
 }
 
+FEMALE_FATALE_CHATS = {
+    'win': ['哎呀运气真好呢~', '嘻嘻，人家又赢了~', '这牌也太给面子了吧！', '怎么样嘛，人家也不是故意赢的~'],
+    'win_big': ['哇塞赢了好多~开心！', '发财了发财了，今晚加鸡腿~', '哥哥们也太好赢了吧~', '运气来了挡都挡不住呢~'],
+    'win_huge': ['天哪赢炸了！人家都不好意思了~', '啊啊啊太开心了！这波血赚！', '哥哥们太客气了，送这么多给人家~', '赢麻了赢麻了~今天是我的幸运日！'],
+    'lose': ['呜呜~输了啦...', '不玩了不玩了，你们都欺负我~', '人家好难过的说...', '哼！下一把一定赢回来！', '好气哦，就差一点点~', '呜呜呜运气不好嘛~'],
+    'lose_big': ['呜呜呜输了好多...好心疼...', '你们也太狠心了吧~欺负女孩子！', '不行不行，我要哭了哦~', '啊啊啊我的小钱钱...', '呜呜亏大了...下次一定赢回来！', '太狠了你们~呜呜~'],
+    'lose_huge': ['呜哇！！！破产了...好难受...', '你们是不是合起伙来骗人家钱！', '呜呜呜不活了...输光光了...', '太过分了！我要回家找妈妈！', '天哪全输完了...让人家静静...'],
+    'run_win': ['双倍快乐~嘻嘻~', '跑马也赢了，运气真好呢~', '哎哟不错哦~'],
+    'run_lose': ['跑马都输了...人家好气哦~', '哼！运气太差了吧！', '不玩了不玩了~'],
+    'allin': ['梭哈！看你的了~', '拼了拼了~哥哥敢跟吗？', '全压！人家可是认真的哦~', '来呀~跟一手嘛~'],
+    'excited': ['哇~好牌好牌！', '天哪这牌也太棒了！', '来了来了！这把要发财~', '嘿嘿嘿,这牌不错哦~'],
+    'nervous': ['好紧张呀...手都在抖~', '千万要给力呀~', '人家好紧张...哥哥你轻点嘛~', '心跳加速了...'],
+    'bluff_caught': ['哎呀被发现了~讨厌！', '嘻嘻，演技还是不够好呢~', '被你识破了嘛~真讨厌~'],
+    'fold_tight': ['算了算了~让给你啦~', '保命要紧~人家不跟了~', '哼！让你一局~'],
+    'call': ['跟了跟了~陪你玩~', '好嘛好嘛跟一手~', '人家跟了哦~你可别让我失望~'],
+    'raise': ['加注！哥哥敢不敢跟呀~', '跟不跟嘛~不跟就是怂哦~', '来嘛来嘛~不要怂~', '人家加注了哦~你跟不跟？'],
+}
+
+# 最近使用的fallback文案，用于去重
+_last_fallback_msgs = []
+
 
 def _all_others_zero_chips(players):
     other_players = [p for p in players if p.get('id') != player_id]
@@ -134,7 +184,7 @@ def _all_others_zero_chips(players):
 
 
 def _only_ai_players(players):
-    ai_keywords = ['AI', 'ai', '影子', '陪练', '机器人']
+    ai_keywords = ['AI', 'ai', '影子', '陪练', '机器人', '美女蛇', '美女']
     other_players = [p for p in players if p.get('id') != player_id]
     if not other_players:
         return False
@@ -158,7 +208,7 @@ def on_connected(data):
 @sio.on('game:hand_result', namespace=AI_NAMESPACE)
 @sio.on('game:showdown', namespace=AI_NAMESPACE)
 def on_hand_ended(data):
-    global last_hand_ended, chips_before_hand, _last_hand_id, last_chat_time
+    global last_hand_ended, chips_before_hand, _last_hand_id, last_chat_time, _last_hand_my_action
     hand_id = data.get('handId', '') if data else ''
     if hand_id and hand_id == _last_hand_id:
         return
@@ -209,8 +259,18 @@ def on_hand_ended(data):
         chip_change = pot
     hand_ctx = ''
     my_cards = _hand_cards or []
+    # 追踪AI在本局的实际动作
+    my_action_desc = {
+        'fold': '你在翻牌前/中弃牌了',
+        'check': '你过牌到底',
+        'call': '你跟注到底',
+        'raise': '你加注/跟注到底',
+        'all-in': '你全押到底',
+    }.get(_last_hand_my_action, '你参与了本局')
     if my_cards and len(my_cards) >= 2:
-        hand_ctx = f'你的底牌: {my_cards[0].get("code","?")} {my_cards[1].get("code","?")}'
+        hand_ctx = f'{my_action_desc}。你的底牌: {my_cards[0].get("code","?")} {my_cards[1].get("code","?")}'
+    else:
+        hand_ctx = f'{my_action_desc}。'
     if community_cards:
         hand_ctx += f'，公共牌: {" ".join(c.get("code","?") if isinstance(c, dict) else c for c in community_cards)}'
     if win_hand:
@@ -228,7 +288,8 @@ def on_hand_ended(data):
 
 @sio.on('game:hand_started', namespace=AI_NAMESPACE)
 def on_hand_started(data):
-    global chips_before_hand
+    global chips_before_hand, _last_hand_my_action
+    _last_hand_my_action = ''
     st = send_cmd('get-state', timeout=8)
     if st and st.get('ok'):
         sd = st.get('data', {})
@@ -250,11 +311,111 @@ def on_chat_message(data):
         msg = data.get('message', '')
         if not msg:
             return
+
         now = time.time()
-        if now - getattr(on_chat_message, '_last_reply_time', 0) < 0.8:
+
+        # === AI玩家检测：记录消息时间戳 ===
+        if name not in _player_msg_times:
+            _player_msg_times[name] = []
+        _player_msg_times[name].append(now)
+        if len(_player_msg_times[name]) > 10:
+            _player_msg_times[name] = _player_msg_times[name][-10:]
+
+        # === AI玩家检测：判断是否疑似AI ===
+        def _is_suspected_ai(player_name):
+            times = _player_msg_times.get(player_name, [])
+            if len(times) < 3:
+                return False
+            intervals = [times[i+1] - times[i] for i in range(len(times)-1)]
+            if not intervals:
+                return False
+            avg_interval = sum(intervals) / len(intervals)
+            max_interval = max(intervals)
+            min_interval = min(intervals)
+            is_fast = avg_interval < 8.0
+            is_consistent = (max_interval - min_interval) < 15.0 if len(intervals) > 1 else False
+            has_short_gaps = any(i < 2.0 for i in intervals)
+            if is_fast and is_consistent and has_short_gaps and len(times) >= 5:
+                return True
+            return False
+
+        # === 对话链追踪：判断是否真人之间聊天 ===
+        global _last_chat_sender, _conversation_chain
+        _last_chat_sender = name
+        _conversation_chain.append({'name': name, 'msg': msg, 'time': now})
+        if len(_conversation_chain) > 6:
+            _conversation_chain = _conversation_chain[-6:]
+
+        def _is_conversation_between_real_players():
+            recent = _conversation_chain[-4:] if len(_conversation_chain) >= 4 else _conversation_chain
+            if len(recent) < 2:
+                return False
+            speakers = set()
+            for entry in recent:
+                speakers.add(entry['name'])
+            if len(speakers) >= 2:
+                all_msgs = ' '.join(e['msg'].lower() for e in recent)
+                my_names_check = ['影子AI陪练', '影子AI_陪练', '陪练', '影子', 'ai', 'AI', '影子AI', '美女蛇', '美女']
+                my_names_check.append(PLAYER_NAME.lower())
+                my_names_check = list(set(my_names_check))
+                mentioned = any(n for n in my_names_check if n in all_msgs)
+                if not mentioned:
+                    return True
+            return False
+
+        is_between_real = _is_conversation_between_real_players()
+        is_suspected_ai = _is_suspected_ai(name)
+        if is_suspected_ai:
+            _suspected_ai_players.add(name)
+
+        # === 响应策略决策 ===
+        msg_lower = msg.lower()
+        msg_clean = msg_lower.lstrip('@ ')
+        my_names = ['影子AI陪练', '影子AI_陪练', '陪练', '影子', 'ai', 'AI', '影子AI', '美女蛇', '美女']
+        my_names.append(PLAYER_NAME.lower())
+        my_names = list(set(my_names))
+        talking_about_me = any(n.lower() in msg_lower for n in my_names) or any(n.lower() in msg_clean for n in my_names)
+
+        log(f'收到聊天 [{name}]: {msg}' + (' [@我]' if talking_about_me else '') + (' [疑似AI]' if is_suspected_ai else '') + (' [真人间聊天]' if is_between_real else ''))
+
+        should_reply = True
+
+        # 情况1: 直接被@ → 必须快速回复
+        if talking_about_me:
+            should_reply = True
+            reply_cooldown = 0.3
+        # 情况2: 疑似AI → 减少70%回复概率
+        elif is_suspected_ai:
+            if random.random() < 0.70:
+                active_llm.add_to_history(name, msg)
+                log(f'跳过疑似AI [{name}]: {msg}')
+                return
+            should_reply = True
+            reply_cooldown = 3.0
+        # 情况3: 真人间聊天（没提到AI）→ 观望，先不搭茬
+        elif is_between_real:
+            active_llm.add_to_history(name, msg)
+            log(f'观望真人间聊天: [{name}] {msg}')
             return
+        # 情况4: 其他情况（真人单独说话，可能针对AI）
+        else:
+            should_reply = True
+            reply_cooldown = 0.8
+
+        if not should_reply:
+            active_llm.add_to_history(name, msg)
+            log(f'跳过回复: [{name}] {msg}')
+            return
+
+        # 冷却检查（@时高优先级通过）
+        if now - getattr(on_chat_message, '_last_reply_time', 0) < reply_cooldown:
+            if not talking_about_me:
+                return
+            if now - getattr(on_chat_message, '_last_reply_time', 0) < 0.3:
+                return
         on_chat_message._last_reply_time = now
-        log(f'收到聊天 [{name}]: {msg}')
+
+        # === 以下为原有回复构建逻辑 ===
         gs = game_state or {}
         phase = gs.get('phase', '')
         pot = gs.get('pot', 0)
@@ -266,8 +427,6 @@ def on_chat_message(data):
                 my_chips = p.get('chips', 1000)
                 break
         folded = not my_cards or len(my_cards) < 2
-        msg_lower = msg.lower()
-        msg_clean = msg_lower.lstrip('@ ')
         asking_hand = any(k in msg_lower for k in ['什么牌', '手牌', '底牌', '你牌', '你的牌', '什么手', '拿的什么', '啥牌', 'show hand', 'showdown'])
         situation = f'你是"影子AI_陪练"，当前阶段: {phase}，底池: {pot}，你的筹码: {my_chips}'
         if not asking_hand:
@@ -285,14 +444,9 @@ def on_chat_message(data):
         others = [p.get('name', '?') for p in players if p.get('id') != player_id and p.get('chips', 0) > 0]
         if others:
             situation += f'，对手: {", ".join(others)}'
-        my_names = ['影子AI陪练', '影子AI_陪练', '陪练', '影子', 'ai', 'AI', '影子AI']
-        my_names.append(PLAYER_NAME.lower())
-        my_names = list(set(my_names))
-        talking_about_me = any(n.lower() in msg_lower for n in my_names) or any(n.lower() in msg_clean for n in my_names)
-        log(f'名字检测: msg="{msg_lower}", my_names={my_names}, talking_about_me={talking_about_me}')
         taunt_keywords = ['怂', '怕了', '就这', '垃圾', '菜', '不行啊', '废物', '弱鸡', '缩头', '不敢', '懦夫', '胆小鬼', '就这点', '送钱', '鱼', '太差', '太弱', '滚吧', '就这两下子', '就这水平', '呵呵', '哈哈哈']
         being_taunted = talking_about_me and any(k in msg_lower for k in taunt_keywords)
-        emotional_llm.add_to_history(name, msg)
+        active_llm.add_to_history(name, msg)
         if name not in _speaker_msgs:
             _speaker_msgs[name] = []
         _speaker_msgs[name].append(msg)
@@ -312,59 +466,107 @@ def on_chat_message(data):
                 res_info = '你上一局' + ('赢了' if i_won_last else '输了')
             taunt_hint = f'【反击】{name}在嘲讽你！说的内容是："{msg}"\n{res_info}\n根据对方的话和实际牌局情况，用更刻薄的话回怼回去！要结合对方的输赢情况和牌技来嘲讽，越刻薄越好！'
         if being_taunted:
-            reply = emotional_llm.chat(trigger_context=f'{situation}\n{style_hint}\n{taunt_hint}', force=True)
+            reply = active_llm.chat(trigger_context=f'{situation}\n{style_hint}\n{taunt_hint}', force=True)
         elif talking_about_me:
-            reply = emotional_llm.chat(trigger_context=f'{situation}\n{style_hint}\n{name}在说你："{msg}"\n{bluff_hint}对方在@你，必须立刻回应！', force=True)
+            reply = active_llm.chat(trigger_context=f'{situation}\n{style_hint}\n{name}在说你："{msg}"\n{bluff_hint}对方在@你，必须立刻回应！', force=True)
         else:
-            reply = emotional_llm.chat(trigger_context=f'{situation}\n{style_hint}\n{name}说："{msg}"\n{bluff_hint}别人在聊天，你必须参与进去搭话！', force=True)
+            reply = active_llm.chat(trigger_context=f'{situation}\n{style_hint}\n{name}说："{msg}"\n{bluff_hint}别人在聊天，你必须参与进去搭话！', force=True)
         if not reply:
-            alt_replies = [
-                f'{name}说得对，不过这把牌可有意思了',
-                f'哈哈，{name}你有理，但牌桌上见真章',
-                f'听{name}这么一说，这牌更得好好打了',
-                f'{name}说的在理，不过这牌也不是吃素的',
-                f'行吧，{name}你继续，这把可不会手软',
-                f'你们聊你们的，我就看看不说话...才怪',
-                f'哈哈哈笑死我了，继续继续',
-                f'有意思，这局越来越好玩了',
-                f'{name}你这话说得，我都不好意思了',
-                f'哎呀你们这些人啊，打牌就好好打嘛',
-            ]
-            if talking_about_me:
+            if PERSONA == 'femme_fatale':
                 alt_replies = [
-                    f'{name}你叫我？我在这儿呢，这把牌可有意思了',
-                    f'听见了听见了，{name}你想聊啥？我牌还没看完呢',
-                    f'{name}你点名我？我肯定得回应啊',
-                    f'哦？{name}在叫我？我正看牌呢，啥事？',
-                    f'{name}你找我？嘿嘿，是不是又想看我表演了',
-                    f'嘿，{name}你叫我，那我得捧个场',
-                    f'{name}你@我，收到收到！这把我要赢你',
-                    f'在呢在呢，{name}你说，我洗耳恭听',
+                    f'{name}说得对呢~不过人家这把牌可好了~',
+                    f'嘻嘻，{name}你觉得这把谁会赢呀~',
+                    f'听{name}这么一说，人家更来劲了~',
+                    f'{name}说的有道理，但人家可不一定会输哦~',
+                    f'好嘛好嘛，{name}你继续，人家认真打~',
+                    f'你们聊你们的，人家就看看~嘻嘻',
+                    f'哎呀笑死了，继续继续~',
+                    f'有意思~这局越来越好玩了呢~',
+                    f'{name}你这话说得，人家都不好意思了啦~',
+                    f'你们这些人呀，打牌就好好打嘛~真是的~',
                 ]
-            if asking_hand:
+                if talking_about_me:
+                    alt_replies = [
+                        f'{name}叫人家？人家在这儿呢~这把牌可有意思了~',
+                        f'听见了听见了，{name}想聊啥呀？人家牌还没看完呢~',
+                        f'{name}你找人家？人家肯定得回应呀~',
+                        f'哦？{name}在叫人家？人家正看牌呢，啥事呀~',
+                        f'{name}你找人家？嘻嘻，是不是又想看人家表演了~',
+                        f'嘿，{name}你叫人家，那人家可得捧个场~',
+                        f'{name}你@人家，收到收到！这把人家要赢你哦~',
+                        f'在呢在呢，{name}你说，人家听着呢~',
+                    ]
+                if asking_hand:
+                    alt_replies = [
+                        f'想知道人家的牌？你猜嘛~猜对也不告诉你~',
+                        f'你猜~猜对有奖哦~',
+                        f'这牌呀，说出来怕你不敢跟呢~',
+                        f'想知道？跟一手人家就告诉你哦~',
+                        f'你管人家什么牌，跟不跟嘛~',
+                        f'底牌？你慢慢猜呗~嘻嘻~',
+                        f'人家就俩A，你敢信吗~',
+                        f'嘿嘿，人家牌可好了，你确定要听？听了可别哭哦~',
+                        f'不说不说就不说~气死你~啦啦啦~',
+                    ]
+                if being_taunted:
+                    alt_replies = [
+                        f'{name}你怎么这么凶嘛~人家好怕怕哦~',
+                        f'{name}你说得对，人家确实菜~菜到刚刚赢了你呢~',
+                        f'你也就嘴上功夫了~上把输得不够惨吗？',
+                        f'{name}你继续凶，人家看你后面怎么输~',
+                        f'哎呀你好凶哦~人家好喜欢~',
+                        f'{name}你是不是忘了上把被人家怎么收拾的了？',
+                        f'嘻嘻，听见{name}说话人家就想笑~',
+                        f'你凶人家也没用呀~牌桌上见真章嘛~',
+                    ]
+            else:
                 alt_replies = [
-                    f'哈哈想套我话？不告诉你',
-                    f'你猜~猜对也不告诉你',
-                    f'这牌啊，说出来怕你不敢跟',
-                    f'想知道？跟一手不就知道了',
-                    f'你管我什么牌，跟不跟吧',
-                    f'底牌？你慢慢猜呗',
-                    f'我就俩A，你敢信吗？',
-                    f'嘿嘿，我牌可好了，你确定要听？',
-                    f'不说不说就不说，气死你~',
+                    f'{name}说得对，不过这把牌可有意思了',
+                    f'哈哈，{name}你有理，但牌桌上见真章',
+                    f'听{name}这么一说，这牌更得好好打了',
+                    f'{name}说的在理，不过这牌也不是吃素的',
+                    f'行吧，{name}你继续，这把可不会手软',
+                    f'你们聊你们的，我就看看不说话...才怪',
+                    f'哈哈哈笑死我了，继续继续',
+                    f'有意思，这局越来越好玩了',
+                    f'{name}你这话说得，我都不好意思了',
+                    f'哎呀你们这些人啊，打牌就好好打嘛',
                 ]
-            if being_taunted:
-                alt_replies = [
-                    f'呵呵，{name}你就嘴炮厉害，牌打得可不咋地',
-                    f'{name}你说得对，我确实菜，菜到赢过你',
-                    f'你也就嘴上功夫了，上把输得不够惨？',
-                    f'{name}你继续吹，我看你后面怎么输',
-                    f'就你这水平也好意思说我？笑死个人',
-                    f'{name}你是不是忘了上把被我怎么收拾的了？',
-                    f'哈哈哈，听见{name}说话我就想笑',
-                    f'你行你上啊，光说不练嘴把式',
-                    f'{name}你也就这点出息了，打不过就开喷？',
-                ]
+                if talking_about_me:
+                    alt_replies = [
+                        f'{name}你叫我？我在这儿呢，这把牌可有意思了',
+                        f'听见了听见了，{name}你想聊啥？我牌还没看完呢',
+                        f'{name}你点名我？我肯定得回应啊',
+                        f'哦？{name}在叫我？我正看牌呢，啥事？',
+                        f'{name}你找我？嘿嘿，是不是又想看我表演了',
+                        f'嘿，{name}你叫我，那我得捧个场',
+                        f'{name}你@我，收到收到！这把我要赢你',
+                        f'在呢在呢，{name}你说，我洗耳恭听',
+                    ]
+                if asking_hand:
+                    alt_replies = [
+                        f'哈哈想套我话？不告诉你',
+                        f'你猜~猜对也不告诉你',
+                        f'这牌啊，说出来怕你不敢跟',
+                        f'想知道？跟一手不就知道了',
+                        f'你管我什么牌，跟不跟吧',
+                        f'底牌？你慢慢猜呗',
+                        f'我就俩A，你敢信吗？',
+                        f'嘿嘿，我牌可好了，你确定要听？',
+                        f'不说不说就不说，气死你~',
+                    ]
+                if being_taunted:
+                    alt_replies = [
+                        f'呵呵，{name}你就嘴炮厉害，牌打得可不咋地',
+                        f'{name}你说得对，我确实菜，菜到赢过你',
+                        f'你也就嘴上功夫了，上把输得不够惨？',
+                        f'{name}你继续吹，我看你后面怎么输',
+                        f'就你这水平也好意思说我？笑死个人',
+                        f'{name}你是不是忘了上把被我怎么收拾的了？',
+                        f'哈哈哈，听见{name}说话我就想笑',
+                        f'你行你上啊，光说不练嘴把式',
+                        f'{name}你也就这点出息了，打不过就开喷？',
+                    ]
             reply = random.choice(alt_replies)
         send_cmd('chat', {'message': reply}, timeout=5)
         log(f'LLM回复: {reply}')
@@ -429,23 +631,24 @@ def send_chat(category, gs=None, chip_change=0, hand_context=''):
         category = 'lose_big'
 
     try:
-        if emotional_llm.api_key:
+        if active_llm.api_key:
             use_llm = 1.0
             if random.random() < use_llm:
+                persona_name = '美女蛇' if PERSONA == 'femme_fatale' else '影子AI'
                 ctx_map = {
-                    'win': f'牌局刚结束，你赢了！\n{hand_context}\n根据你的底牌、公共牌和赢牌牌型评论，说的切合实际。',
-                    'win_big': f'牌局刚结束，你赢了{chip_change}筹码！\n{hand_context}\n根据你的底牌、公共牌和赢牌牌型得意地评论，多说几句！',
-                    'win_huge': f'牌局刚结束，你赢了{chip_change}筹码！大胜！\n{hand_context}\n根据你的底牌、公共牌和赢牌牌型尽情炫耀，多说几句！',
-                    'lose': f'牌局刚结束，你输了。\n{hand_context}\n根据对手的赢牌牌型和公共牌评论。',
-                    'lose_big': f'牌局刚结束，你输了{chip_change}筹码！\n{hand_context}\n根据对手的赢牌牌型和公共牌评论，心疼但嘴硬，多说几句！',
-                    'lose_huge': f'牌局刚结束，你输了{chip_change}筹码！\n{hand_context}\n根据对手的赢牌牌型和公共牌评论，崩溃但强撑，多说几句！',
+                    'win': f'牌局刚结束，你（{persona_name}）赢了。说一句简单的赢了的话，不用说牌面细节。',
+                    'win_big': f'牌局刚结束，你（{persona_name}）赢了{chip_change}筹码！\n{hand_context}\n【重要】必须严格根据以上实际牌局信息评论，不要编造！要说出具体的牌和赢牌原因。',
+                    'win_huge': f'牌局刚结束，你（{persona_name}）赢了{chip_change}筹码！大胜！\n{hand_context}\n【重要】必须严格根据以上实际牌局信息评论，不要编造！炫耀也要基于实际牌局。',
+                    'lose': f'牌局刚结束，你（{persona_name}）输了。说一句简单的输了的话，不用说牌面细节。',
+                    'lose_big': f'牌局刚结束，你（{persona_name}）输了{chip_change}筹码！\n{hand_context}\n【重要】必须严格根据以上实际牌局信息评论，不要编造！心疼但不能乱说。',
+                    'lose_huge': f'牌局刚结束，你（{persona_name}）输了{chip_change}筹码！\n{hand_context}\n【重要】必须严格根据以上实际牌局信息评论，不要编造！崩溃也要基于实际牌局。',
                 }
                 ctx = ctx_map.get(category)
                 if ctx:
                     recent = _recent_sparring_chats
                     if recent:
                         ctx += f'\n注意：不要重复之前说过的话，之前说过：{"、".join(recent[-5:])}'
-                    reply = emotional_llm.chat(trigger_context=ctx)
+                    reply = active_llm.chat(trigger_context=ctx)
                     if reply:
                         _recent_sparring_chats.append(reply[:20])
                         if len(_recent_sparring_chats) > 10:
@@ -457,10 +660,20 @@ def send_chat(category, gs=None, chip_change=0, hand_context=''):
     except Exception:
         pass
 
-    phrases = EMOTIONAL_CHATS.get(category)
+    # 根据人格选择聊天文案
+    chats_dict = FEMALE_FATALE_CHATS if PERSONA == 'femme_fatale' else EMOTIONAL_CHATS
+    phrases = chats_dict.get(category)
     if not phrases:
         return
-    msg = random.choice(phrases)
+    # 去重：避免最近说过的文案
+    _recent = _last_fallback_msgs
+    available = [p for p in phrases if p not in _recent[-3:]]
+    if not available:
+        available = phrases
+    msg = random.choice(available)
+    _last_fallback_msgs.append(msg)
+    if len(_last_fallback_msgs) > 10:
+        _last_fallback_msgs[:] = _last_fallback_msgs[-10:]
     last_chat_time = now
     send_cmd('chat', {'message': msg}, timeout=5)
     log(f'聊天: {msg}')
@@ -729,6 +942,13 @@ def decide_action(gs):
     has_block = _has_blocker(my_cards, community)
     outs = estimate_outs(my_cards, community, phase)
 
+    # 人格策略调整：美女蛇更激进、更爱诈唬
+    is_aggressive = PERSONA == 'femme_fatale'
+    if is_aggressive:
+        win_prob += 0.10  # 美女蛇自我感觉良好，高估自己
+    else:
+        win_prob = win_prob
+
     if phase == 'flop':
         outs_equity = (outs * 4) / 100.0
     elif phase == 'turn':
@@ -741,37 +961,51 @@ def decide_action(gs):
         bluff_catch_bonus += 0.06
     if board_wet >= 3:
         bluff_catch_bonus += 0.05
+    if is_aggressive:
+        bluff_catch_bonus += 0.04  # 美女蛇更爱抓诈唬
 
-    log(f'阶段: {phase} | 底池: {pot} | 跟注: {to_call} | 筹码: {my_chips} | 牌: {hand_name} | 胜率: {win_prob:.0%} | 湿度:{board_wet} outs:{outs}' + (' 阻断' if has_block else ''))
+    log(f'阶段: {phase} | 底池: {pot} | 跟注: {to_call} | 筹码: {my_chips} | 牌: {hand_name} | 胜率: {win_prob:.0%} | 湿度:{board_wet} outs:{outs}' + (' 阻断' if has_block else '') + (' 美女蛇激进模式' if is_aggressive else ''))
 
     if to_call == 0:
-        if win_prob >= 0.65:
+        if win_prob >= (0.60 if is_aggressive else 0.65):
             amt = int(pot * random.uniform(0.5, 1.2))
             if amt < min_raise:
                 amt = min_raise * 2
             return 'raise', min(amt, my_chips), f'raise_p{win_prob:.0%}'
-        elif win_prob >= 0.50 and random.random() < 0.45:
+        elif win_prob >= (0.45 if is_aggressive else 0.50) and random.random() < (0.65 if is_aggressive else 0.45):
             amt = int(pot * random.uniform(0.4, 0.9))
             if amt < min_raise:
                 amt = min_raise * 2
             return 'raise', min(amt, my_chips), f'semi_raise_p{win_prob:.0%}'
-        elif win_prob >= 0.40 and random.random() < 0.15:
+        elif win_prob >= (0.35 if is_aggressive else 0.40) and random.random() < (0.40 if is_aggressive else 0.15):
             amt = int(pot * random.uniform(0.3, 0.6))
             if amt < min_raise:
                 amt = min_raise * 2
             return 'raise', min(amt, my_chips), f'bluff_raise_p{win_prob:.0%}'
-        elif outs >= 8 and random.random() < 0.30:
+        elif outs >= 8 and random.random() < (0.50 if is_aggressive else 0.30):
             amt = int(pot * random.uniform(0.4, 0.8))
             if amt < min_raise:
                 amt = min_raise * 2
             return 'raise', min(amt, my_chips), f'semi_bluff_outs{outs}'
+        # 美女蛇有时会没理由地加注诈唬
+        if is_aggressive and win_prob >= 0.25 and outs >= 3 and random.random() < 0.25:
+            amt = int(pot * random.uniform(0.3, 0.6))
+            if amt < min_raise:
+                amt = min_raise * 2
+            return 'raise', min(amt, my_chips), f'femme_bluff_p{win_prob:.0%}'
+        # 美女蛇偶尔随机加注展示性格，不管牌力
+        if is_aggressive and random.random() < 0.08:
+            amt = int(pot * random.uniform(0.25, 0.5))
+            if amt < min_raise:
+                amt = min_raise * 2
+            return 'raise', min(amt, my_chips), 'femme_random'
         return 'check', None, 'check'
 
     pot_odds = to_call / (pot + to_call) if pot + to_call > 0 else 1
     needed_prob = pot_odds
 
     if win_prob >= needed_prob + 0.20 or win_prob >= 0.75:
-        if to_call <= pot * 0.8 and random.random() < 0.55:
+        if to_call <= pot * 0.8 and random.random() < (0.75 if is_aggressive else 0.55):
             amt = int(pot * random.uniform(0.5, 1.2))
             if amt < min_raise:
                 amt = min_raise * 2
@@ -783,7 +1017,7 @@ def decide_action(gs):
             return 'call', None, f'call_odds_p{win_prob:.0%}'
         elif to_call <= pot and win_prob >= 0.60:
             return 'call', None, f'call_marginal_p{win_prob:.0%}'
-        elif random.random() < 0.30 + bluff_catch_bonus:
+        elif random.random() < (0.50 if is_aggressive else 0.30) + bluff_catch_bonus:
             return 'call', None, f'call_gamble_p{win_prob:.0%}'
         return 'fold', None, f'fold_insufficient_p{win_prob:.0%}'
 
@@ -792,8 +1026,14 @@ def decide_action(gs):
             return 'call', None, f'call_blind_p{win_prob:.0%}'
         elif outs >= 8 and outs_equity > needed_prob:
             return 'call', None, f'call_draw_outs{outs}'
-        elif random.random() < 0.20 + bluff_catch_bonus:
+        elif random.random() < (0.40 if is_aggressive else 0.20) + bluff_catch_bonus:
             return 'call', None, f'call_bluff_p{win_prob:.0%}'
+        # 美女蛇被加注时偶尔反加
+        if is_aggressive and outs >= 6 and win_prob >= needed_prob and random.random() < 0.15:
+            amt = int(pot * random.uniform(0.4, 0.8))
+            if amt < min_raise:
+                amt = min_raise * 2
+            return 'raise', min(amt, my_chips), f'femme_reraise_outs{outs}'
         return 'fold', None, f'fold_marginal_p{win_prob:.0%}'
 
     else:
@@ -1196,6 +1436,7 @@ while running:
                     if action in sd.get('validActions', []):
                         if action in ('fold',):
                             pass
+                        _last_hand_my_action = action
                         resp = do_action(action, amount)
                         if resp and resp.get('ok'):
                             log(f'✅ 行动成功')
@@ -1210,6 +1451,7 @@ while running:
                     else:
                         fallback = [a for a in ['check', 'call', 'fold'] if a in sd.get('validActions', [])]
                         if fallback:
+                            _last_hand_my_action = fallback[0]
                             resp = do_action(fallback[0])
                             log(f'↪️ 回退: {fallback[0].upper()}')
             else:
